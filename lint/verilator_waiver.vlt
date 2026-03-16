@@ -1,0 +1,19 @@
+// Licensed under the Apache License, Version 2.0, see LICENSE for details.
+// SPDX-License-Identifier: Apache-2.0
+
+// Lint waivers for Verilator
+// See https://verilator.org/guide/latest/exe_verilator.html#configuration-files
+// for documentation.
+//
+// Important: This file must included *before* any other Verilog file is read.
+// Otherwise, only global waivers are applied, but not file-specific waivers.
+
+`verilator_config
+
+lint_off -rule UNUSED -file "*writeback_engine.sv" -match "*axi_bresp_i*"
+
+lint_off -rule UNUSED -file "*miss_handler.sv" -match "*m_axi_bid*"
+lint_off -rule UNUSED -file "*miss_handler.sv" -match "*m_axi_rid*"
+lint_off -rule UNUSED -file "*miss_handler.sv" -match "*m_axi_rresp*"
+
+lint_off -rule UNUSED -file "*cache_controller.sv" -match "*addr_offset*"
