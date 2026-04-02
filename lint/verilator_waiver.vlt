@@ -9,6 +9,7 @@
 // Otherwise, only global waivers are applied, but not file-specific waivers.
 
 `verilator_config
+lint_off -rule PINCONNECTEMPTY
 
 lint_off -rule UNUSED -file "*writeback_engine.sv" -match "*axi_bresp_i*"
 
@@ -17,3 +18,19 @@ lint_off -rule UNUSED -file "*miss_handler.sv" -match "*m_axi_rid*"
 lint_off -rule UNUSED -file "*miss_handler.sv" -match "*m_axi_rresp*"
 
 lint_off -rule UNUSED -file "*cache_controller.sv" -match "*addr_offset*"
+
+lint_off -file "*true_dual_port_ram.sv"
+lint_off -file "*adam_mig.sv"
+
+
+lint_off -rule UNUSED -file "*top_cache.sv" -match "*ui_addn_clk_0*"
+lint_off -rule UNUSED -file "*top_cache.sv" -match "*ui_addn_clk_1*"
+lint_off -rule UNUSED -file "*top_cache.sv" -match "*ui_addn_clk_2*"
+lint_off -rule UNUSED -file "*top_cache.sv" -match "*ui_addn_clk_3*"
+lint_off -rule UNUSED -file "*top_cache.sv" -match "*ui_addn_clk_4*"
+
+lint_off -rule UNUSED -file "*top_cache.sv" -match "*init_calib_complete*"
+lint_off -rule UNUSED -file "*top_cache.sv" -match "*mmcm_locked*"
+
+lint_off -rule UNUSED -file "*top_cache.sv" -match "*dram_axi_awaddr'[31:29]*"
+lint_off -rule UNUSED -file "*top_cache.sv" -match "*dram_axi_araddr'[31:29]*"

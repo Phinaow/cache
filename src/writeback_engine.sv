@@ -4,10 +4,9 @@ module writeback_engine
     input logic clk_i,
     input logic rst_ni,
 
-    input  logic                  start_wb_i,
-    input  logic [MEM_ADDR_W-1:0] target_addr_i,
-    output logic                  busy_o,
-    output logic                  done_o,
+    input  cdc_data_t             data_i,
+    input  logic                  addr_valid_i,
+    output logic                  addr_ready_o,
 
     output logic [MEM_CACHE_ADDR_W-1:0] ram_addr_o,
     input  logic [      MEM_DATA_W-1:0] ram_data_i,
@@ -44,7 +43,7 @@ module writeback_engine
 
   logic sample_data;
 
-  assign axi_awlen_o   = 8'd127;
+  assign axi_awlen_o   = data_i.nb_transfer; // 8'd127;
   assign axi_awsize_o  = 3'd4;
   assign axi_awburst_o = 2'b01;
   assign axi_wstrb_o   = '1;
@@ -65,22 +64,22 @@ module writeback_engine
     end
   end
 
-  assign sample_data = axi_wvalid_o && axi_wready_i || read_ptr_q == '0;
+  assign sample_data = axi_wvalid_o && axi_wready_i ||
+          read_ptr_d[MEM_CACHE_ADDR_W-1:0] == data_i.cache_addr;
 
   always_comb begin
-    busy_o        = 1'b1;
-    done_o        = 1'b0;
+
     axi_awvalid_o = 1'b0;
     axi_wlast_o   = 1'b0;
     axi_wvalid_o  = 1'b0;
     axi_bready_o  = 1'b0;
-    read_ptr_d    = '0;
+    addr_ready_o  = 1'b0;
+    read_ptr_d[MEM_CACHE_ADDR_W-1:0]    = data_i.cache_addr;
     state_d       = state_q;
 
     unique case (state_q)
       StIdle: begin
-        busy_o = 1'b0;
-        if (start_wb_i) begin
+        if (addr_valid_i && data_i.wb_rf == WRITEBACK) begin
           state_d = StSendAW;
         end
       end
@@ -96,15 +95,16 @@ module writeback_engine
 
         read_ptr_d = read_ptr_q;
 
-        if (read_ptr_q > '0 && read_ptr_q <= 8'd128) begin
+        if (read_ptr_q[MEM_CACHE_ADDR_W-1:0] > data_i.cache_addr &&
+          read_ptr_q <= data_i.nb_transfer + data_i.cache_addr) begin
           axi_wvalid_o = 1'b1;
         end
 
-        if (read_ptr_q == '0) begin
+        if (read_ptr_q[MEM_CACHE_ADDR_W-1:0] == data_i.cache_addr) begin
           read_ptr_d = read_ptr_q + 1'b1;
         end else if (axi_wready_i) begin
 
-          if (read_ptr_q == 8'd128) begin
+          if (read_ptr_q == data_i.nb_transfer + data_i.cache_addr) begin
             axi_wlast_o = 1'b1;
             state_d     = StWaitBresp;
           end else begin
@@ -117,8 +117,7 @@ module writeback_engine
       StWaitBresp: begin
         axi_bready_o = 1'b1;
         if (axi_bvalid_i) begin
-          done_o  = 1'b1;
-          busy_o  = 1'b0;
+          addr_ready_o = 1'b1;
           state_d = StIdle;
         end
       end
@@ -129,6 +128,6 @@ module writeback_engine
 
   assign ram_addr_o   = read_ptr_d[MEM_CACHE_ADDR_W-1:0];
   assign axi_wdata_o  = data_buffer;
-  assign axi_awaddr_o = target_addr_i;
+  assign axi_awaddr_o = data_i.mem_addr;
 
 endmodule

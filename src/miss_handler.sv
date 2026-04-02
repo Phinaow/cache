@@ -4,98 +4,73 @@ module miss_handler
     // ----------------------- //
     // Clock and reset signals
     // ----------------------- //
-    input  logic                        clk_i,
-    input  logic                        rst_ni,
+    input  logic                             clk_i,
+    input  logic                             rst_ni,
     // Control signals
-    input  logic                        refill_i,
-    input  logic                        writeback_i,
-    output logic                        done_o,
-    input  logic [      MEM_ADDR_W-1:0] mig_addr_i,
+    input  cdc_data_t                        cdc_data_i,
+    // input  rf_wb_e                           cdc_op_type_i,
+    input  logic                             cdc_valid_i,
+    output logic                             cdc_ready_o,
     // ----------- //
     // RAM signals
     // ----------- //
     // Addr
-    output logic [MEM_CACHE_ADDR_W-1:0] ram_addr_o,
-    // Read data from ram
-    input  logic [      MEM_DATA_W-1:0] ram_data_i,
-    // Write data in ram
-    output logic [      MEM_DATA_W-1:0] ram_data_o,
-    output logic [                15:0] ram_we_o,
+    output logic      [MEM_CACHE_ADDR_W-1:0] ram_addr_o,
+    input  logic      [      MEM_DATA_W-1:0] ram_data_i,
+    output logic      [      MEM_DATA_W-1:0] ram_data_o,
+    output logic      [  (MEM_DATA_W/8)-1:0] ram_we_o,
     // ----------------- //
     // Write AXI signals
     // ----------------- //
     // Config signals
-    output logic [                 1:0] m_axi_awid,
-    output logic [      MEM_ADDR_W-1:0] m_axi_awaddr,
-    output logic [                 7:0] m_axi_awlen,
-    output logic [                 2:0] m_axi_awsize,
-    output logic [                 1:0] m_axi_awburst,
-    output logic [                 0:0] m_axi_awlock,
-    output logic [                 3:0] m_axi_awcache,
-    output logic [                 2:0] m_axi_awprot,
-    output logic [                 3:0] m_axi_awqos,
-    output logic                        m_axi_awvalid,
-    input  logic                        m_axi_awready,
+    output logic      [                 1:0] m_axi_awid,
+    output logic      [      MEM_ADDR_W-1:0] m_axi_awaddr,
+    output logic      [                 7:0] m_axi_awlen,
+    output logic      [                 2:0] m_axi_awsize,
+    output logic      [                 1:0] m_axi_awburst,
+    output logic      [                 0:0] m_axi_awlock,
+    output logic      [                 3:0] m_axi_awcache,
+    output logic      [                 2:0] m_axi_awprot,
+    output logic      [                 3:0] m_axi_awqos,
+    output logic                             m_axi_awvalid,
+    input  logic                             m_axi_awready,
     // Data signals
-    output logic [      MEM_DATA_W-1:0] m_axi_wdata,
-    output logic [    MEM_DATA_W/8-1:0] m_axi_wstrb,
-    output logic                        m_axi_wlast,
-    output logic                        m_axi_wvalid,
-    input  logic                        m_axi_wready,
+    output logic      [      MEM_DATA_W-1:0] m_axi_wdata,
+    output logic      [    MEM_DATA_W/8-1:0] m_axi_wstrb,
+    output logic                             m_axi_wlast,
+    output logic                             m_axi_wvalid,
+    input  logic                             m_axi_wready,
     // Response signals
-    input  logic [                 1:0] m_axi_bid,
-    input  logic [                 1:0] m_axi_bresp,
-    input  logic                        m_axi_bvalid,
-    output logic                        m_axi_bready,
+    input  logic      [                 1:0] m_axi_bid,
+    input  logic      [                 1:0] m_axi_bresp,
+    input  logic                             m_axi_bvalid,
+    output logic                             m_axi_bready,
     // ---------------- //
     // Read AXI signals
     // ---------------- //
     // Config signals
-    output logic [                 1:0] m_axi_arid,
-    output logic [      MEM_ADDR_W-1:0] m_axi_araddr,
-    output logic [                 7:0] m_axi_arlen,
-    output logic [                 2:0] m_axi_arsize,
-    output logic [                 1:0] m_axi_arburst,
-    output logic [                 0:0] m_axi_arlock,
-    output logic [                 3:0] m_axi_arcache,
-    output logic [                 2:0] m_axi_arprot,
-    output logic [                 3:0] m_axi_arqos,
-    output logic                        m_axi_arvalid,
-    input  logic                        m_axi_arready,
+    output logic      [                 1:0] m_axi_arid,
+    output logic      [      MEM_ADDR_W-1:0] m_axi_araddr,
+    output logic      [                 7:0] m_axi_arlen,
+    output logic      [                 2:0] m_axi_arsize,
+    output logic      [                 1:0] m_axi_arburst,
+    output logic      [                 0:0] m_axi_arlock,
+    output logic      [                 3:0] m_axi_arcache,
+    output logic      [                 2:0] m_axi_arprot,
+    output logic      [                 3:0] m_axi_arqos,
+    output logic                             m_axi_arvalid,
+    input  logic                             m_axi_arready,
     // Data signals
-    input  logic [                 1:0] m_axi_rid,
-    input  logic [      MEM_DATA_W-1:0] m_axi_rdata,
-    input  logic [                 1:0] m_axi_rresp,
-    input  logic                        m_axi_rlast,
-    input  logic                        m_axi_rvalid,
-    output logic                        m_axi_rready
+    input  logic      [                 1:0] m_axi_rid,
+    input  logic      [      MEM_DATA_W-1:0] m_axi_rdata,
+    input  logic      [                 1:0] m_axi_rresp,
+    input  logic                             m_axi_rlast,
+    input  logic                             m_axi_rvalid,
+    output logic                             m_axi_rready
 );
-
-  logic refill_cmd;
-  logic writeback_cmd;
-
-  logic refill_done;
-  logic writeback_done;
-
-  logic start_refill;
-  logic start_writeback;
-
-  logic refill_busy;
-  logic writeback_busy;
-
-  logic [MEM_ADDR_W-1:0] refill_addr;
-  logic [MEM_ADDR_W-1:0] writeback_addr;
 
   logic [MEM_CACHE_ADDR_W-1:0] ram_addr_from_refill;
   logic [MEM_CACHE_ADDR_W-1:0] ram_addr_from_writeback;
-
-  typedef enum logic [1:0] {
-    StIdle,
-    StWriteback,
-    StRefill
-  } state_e;
-
-  state_e state_q, state_d;
 
   // Unused AXI signals
   assign m_axi_awid    = '0;
@@ -110,115 +85,94 @@ module miss_handler
   assign m_axi_arprot  = '0;
   assign m_axi_arqos   = '0;
 
-  always_ff @(posedge clk_i or negedge rst_ni) begin
+  // cache_op_t tr_data;
 
-    if (!rst_ni) begin
-      refill_cmd    <= 1'b0;
-      writeback_cmd <= 1'b0;
-    end else begin
+  logic refill_valid;
+  logic refill_ready;
 
-      if (refill_i) begin
-        refill_cmd  <= 1'b1;
-        refill_addr <= mig_addr_i;
-      end else if (refill_done) begin
-        refill_cmd <= 1'b0;
-      end
+  logic writeback_valid;
+  logic writeback_ready;
 
-      if (writeback_i) begin
-        writeback_cmd  <= 1'b1;
-        writeback_addr <= mig_addr_i;
-      end else if (writeback_done) begin
-        writeback_cmd <= 1'b0;
-      end
+  // assign tr_data.mem_addr = cdc_data_i.addr;
+  // assign tr_data.nb_transfer = 8'd127;
+  // assign tr_data.cache_addr = '0;
 
-    end
+  // logic do_rf_after_wb;
 
-  end
-
-  assign done_o = writeback_done || refill_done;
+  // always_ff @(posedge clk_i or negedge rst_ni) begin
+  //   if(!rst_ni) begin
+  //     do_rf_after_wb <= 1'b0;
+  //   end else begin
+  //     if(writeback_valid && writeback_ready) do_rf_after_wb <= 1;
+  //     if(refill_ready && refill_valid) do_rf_after_wb <= 1'b0;
+  //   end
+  // end
 
   always_comb begin
-    if (refill_cmd) begin
-      ram_addr_o = ram_addr_from_refill;
-    end else if (writeback_cmd) begin
-      ram_addr_o = ram_addr_from_writeback;
-    end else begin
-      ram_addr_o = '0;
-    end
-  end
 
-  always_ff @(posedge clk_i or negedge rst_ni) begin
-    if (!rst_ni) begin
-      state_q <= StIdle;
-    end else begin
-      state_q <= state_d;
-    end
-  end
+    unique case (cdc_data_i.wb_rf)
+      REFILL: begin
+        ram_addr_o = ram_addr_from_refill;
 
-  always_comb begin
-    start_refill    = 1'b0;
-    start_writeback = 1'b0;
-    state_d         = state_q;
+        refill_valid = cdc_valid_i;
+        cdc_ready_o = refill_ready;
 
-    unique case (state_q)
-      StIdle: begin
-        if (!refill_busy && !writeback_busy) begin
-          if (writeback_cmd) begin
-            start_writeback = 1'b1;
-            state_d         = StWriteback;
-          end else if (refill_cmd) begin
-            start_refill = 1'b1;
-            state_d      = StRefill;
-          end
-        end
+        writeback_valid = 1'b0;
       end
 
-      StWriteback: begin
-        if (writeback_done) begin
-          state_d = StIdle;
-        end
+      WRITEBACK: begin
+
+        // if(do_rf_after_wb) begin
+        //   ram_addr_o = ram_addr_from_refill;
+
+        //   refill_valid = cdc_valid_i;
+        //   cdc_ready_o = refill_ready;
+
+        //   writeback_valid = 1'b0;
+        // end else begin
+        ram_addr_o = ram_addr_from_writeback;
+
+        refill_valid = 1'b0;
+
+        writeback_valid = cdc_valid_i;
+        cdc_ready_o = writeback_ready;
+        //   cdc_ready_o = 1'b0;
+        // end
       end
 
-      StRefill: begin
-        if (refill_done) begin
-          state_d = StIdle;
-        end
-      end
-
-      default:;
+      default: ;
     endcase
+
   end
 
 
   refill_engine refill_engine_inst (
-      .clk_i         (clk_i),
-      .rst_ni        (rst_ni),
-      .start_refill_i(start_refill),
-      .target_addr_i (refill_addr),
-      .busy_o        (refill_busy),
-      .done_o        (refill_done),
-      .ram_addr_o    (ram_addr_from_refill),
-      .ram_data_o    (ram_data_o),
-      .ram_we_o      (ram_we_o),
-      .axi_araddr_o  (m_axi_araddr),
-      .axi_arlen_o   (m_axi_arlen),
-      .axi_arsize_o  (m_axi_arsize),
-      .axi_arburst_o (m_axi_arburst),
-      .axi_arvalid_o (m_axi_arvalid),
-      .axi_arready_i (m_axi_arready),
-      .axi_rdata_i   (m_axi_rdata),
-      .axi_rlast_i   (m_axi_rlast),
-      .axi_rvalid_i  (m_axi_rvalid),
-      .axi_rready_o  (m_axi_rready)
+      .clk_i        (clk_i),
+      .rst_ni       (rst_ni),
+      .data_i       (cdc_data_i),
+      .addr_valid_i (refill_valid),
+      .addr_ready_o (refill_ready),
+      .ram_addr_o   (ram_addr_from_refill),
+      .ram_data_o   (ram_data_o),
+      .ram_we_o     (ram_we_o),
+      .axi_araddr_o (m_axi_araddr),
+      .axi_arlen_o  (m_axi_arlen),
+      .axi_arsize_o (m_axi_arsize),
+      .axi_arburst_o(m_axi_arburst),
+      .axi_arvalid_o(m_axi_arvalid),
+      .axi_arready_i(m_axi_arready),
+      .axi_rdata_i  (m_axi_rdata),
+      .axi_rlast_i  (m_axi_rlast),
+      .axi_rvalid_i (m_axi_rvalid),
+      .axi_rready_o (m_axi_rready)
   );
 
   writeback_engine writeback_engine_inst (
       .clk_i        (clk_i),
       .rst_ni       (rst_ni),
-      .start_wb_i   (start_writeback),
-      .target_addr_i(writeback_addr),
-      .busy_o       (writeback_busy),
-      .done_o       (writeback_done),
+      .data_i       (cdc_data_i),
+      .addr_valid_i (writeback_valid),
+      .addr_ready_o (writeback_ready),
       .ram_addr_o   (ram_addr_from_writeback),
       .ram_data_i   (ram_data_i),
       .axi_awaddr_o (m_axi_awaddr),

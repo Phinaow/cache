@@ -1,0 +1,6 @@
+.py_venv
+__pycache__
+.pytest_cache
+.vscode
+tree.json
+sim_build/

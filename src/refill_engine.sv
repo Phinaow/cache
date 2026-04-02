@@ -4,10 +4,9 @@ module refill_engine
     input logic clk_i,
     input logic rst_ni,
 
-    input  logic                  start_refill_i,
-    input  logic [MEM_ADDR_W-1:0] target_addr_i,
-    output logic                  busy_o,
-    output logic                  done_o,
+    input  cdc_data_t             data_i,
+    input  logic                  addr_valid_i,
+    output logic                  addr_ready_o,
 
     output logic [MEM_CACHE_ADDR_W-1:0] ram_addr_o,
     output logic [      MEM_DATA_W-1:0] ram_data_o,
@@ -26,7 +25,7 @@ module refill_engine
     output logic                  axi_rready_o
 );
 
-  typedef enum logic [1:0] {
+  typedef enum {
     StIdle,
     StSendAddr,
     StReadData
@@ -35,7 +34,7 @@ module refill_engine
   state_e state_q, state_d;
   logic [MEM_CACHE_ADDR_W-1:0] write_ptr_q, write_ptr_d;
 
-  assign axi_arlen_o   = 8'd127;
+  assign axi_arlen_o   = data_i.nb_transfer; // 8'd127;
   assign axi_arsize_o  = 3'd4;
   assign axi_arburst_o = 2'b01;
 
@@ -53,15 +52,13 @@ module refill_engine
 
     axi_arvalid_o = 1'b0;
     axi_rready_o  = 1'b0;
-    done_o        = 1'b0;
-    busy_o        = 1'b1;
-    write_ptr_d   = '0;
+    addr_ready_o  = 1'b0;
+    write_ptr_d   = data_i.cache_addr;
     state_d       = state_q;
 
     unique case (state_q)
       StIdle: begin
-        busy_o = 1'b0;
-        if (start_refill_i) begin
+        if (addr_valid_i && data_i.wb_rf == REFILL) begin
           state_d = StSendAddr;
         end
       end
@@ -80,7 +77,7 @@ module refill_engine
         if (axi_rvalid_i && axi_rready_o) begin
           write_ptr_d = write_ptr_q + 1'b1;
           if (axi_rlast_i) begin
-            done_o  = 1'b1;
+            addr_ready_o = 1'b1;
             state_d = StIdle;
           end
         end
@@ -94,6 +91,6 @@ module refill_engine
   assign ram_addr_o   = write_ptr_q;
   assign ram_data_o   = axi_rdata_i;
   assign ram_we_o     = (axi_rvalid_i && axi_rready_o) ? '1 : '0;
-  assign axi_araddr_o = target_addr_i;
+  assign axi_araddr_o = data_i.mem_addr;
 
 endmodule
