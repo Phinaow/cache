@@ -4,3 +4,5 @@ __pycache__
 .vscode
 tree.json
 sim_build/
+vivado/
+uart_src/

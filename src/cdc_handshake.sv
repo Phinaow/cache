@@ -17,14 +17,16 @@ module cdc_handshake #(
   logic src_req_q, src_ack_q;
   logic dst_req_q, dst_ack_q;
 
-  logic temp;
+  T data_reg_src;
+  T data_reg_dst;
 
   always_ff @(posedge (clk_src_i) or negedge (rst_src_ni)) begin
     if (!rst_src_ni) begin
       src_req_q <= (1'b0);
     end else begin
-      if (src_valid_i && temp && !src_ready_o) begin
+      if (src_valid_i && src_ready_o) begin
         src_req_q <= ~src_req_q;
+        data_reg_src <= src_data_i;
       end
     end
   end
@@ -32,15 +34,12 @@ module cdc_handshake #(
   always_ff @(posedge (clk_src_i) or negedge (rst_src_ni)) begin
     if (!rst_src_ni) begin
       src_ack_q <= (1'b0);
-      src_ready_o <= 1'b0;
     end else begin
       src_ack_q <= (dst_ack_q);
-
-      src_ready_o <= (src_ack_q != dst_ack_q);
     end
   end
 
-  assign temp = (src_req_q == src_ack_q);
+  assign src_ready_o = (src_req_q == src_ack_q);
 
   always_ff @(posedge (clk_dst_i) or negedge (rst_dst_ni)) begin
     if (!rst_dst_ni) begin
@@ -57,11 +56,12 @@ module cdc_handshake #(
       dst_req_q <= (1'b0);
     end else begin
       dst_req_q <= (src_req_q);
+      data_reg_dst <= data_reg_src;
     end
   end
 
   assign dst_valid_o = (dst_req_q != dst_ack_q);
 
-  assign dst_data_o = src_data_i;
+  assign dst_data_o = data_reg_dst;
 
 endmodule

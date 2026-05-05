@@ -15,7 +15,7 @@ package cache_pkg;
   // Cache parameters
 
   // Number of words in the cache seen by the cpu
-  parameter int unsigned CPU_CACHE_SIZE = 512;
+  parameter int unsigned CPU_CACHE_SIZE = 512*4;
   // Number of words in the cache seen by the memory
   parameter int unsigned MEM_CACHE_SIZE = (CPU_CACHE_SIZE * CPU_ADDR_W) / MEM_DATA_W;
 
@@ -23,7 +23,7 @@ package cache_pkg;
   parameter int unsigned MEM_CACHE_ADDR_W = $clog2(MEM_CACHE_SIZE);
 
   parameter int unsigned CACHE_SIZE = CPU_CACHE_SIZE * CPU_DATA_W / 8;
-  parameter int unsigned NB_LINE = 4;
+  parameter int unsigned NB_LINE = 8;
   parameter int unsigned NB_TAG = $clog2(NB_LINE);
   parameter int unsigned LINE_SIZE = CACHE_SIZE / NB_LINE;
 

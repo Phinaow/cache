@@ -91,59 +91,69 @@ module top_cache
 
   assign aresetn = ~ui_clk_sync_rst;
 
-  logic controller_valid_cdc;
-  logic controller_ready_cdc;
-  cdc_data_t controller_data_cdc;
+  logic                             controller_valid_cdc;
+  logic                             controller_ready_cdc;
+  cdc_data_t                        controller_data_cdc;
 
-  logic [CPU_CACHE_ADDR_W-1:0] controller_to_cache_addr;
-  logic [      CPU_DATA_W-1:0] controller_to_cache_data;
-  logic [      CPU_DATA_W-1:0] cache_to_controller_data;
-  logic [  (CPU_DATA_W/8)-1:0] controller_to_cache_we;
+  logic      [CPU_CACHE_ADDR_W-1:0] controller_to_cache_addr;
+  logic      [      CPU_DATA_W-1:0] controller_to_cache_data;
+  logic      [      CPU_DATA_W-1:0] cache_to_controller_data;
+  logic      [  (CPU_DATA_W/8)-1:0] controller_to_cache_we;
 
-  logic miss_handler_valid_cdc;
-  logic miss_handler_ready_cdc;
-  cdc_data_t miss_handler_data_cdc;
+  logic                             controller_resp_valid;
+  logic                             controller_resp_ready;
+  rf_wb_e                           controller_resp_data;
 
-  logic [MEM_CACHE_ADDR_W-1:0] miss_handler_to_cache_addr;
-  logic [      MEM_DATA_W-1:0] cache_to_miss_handler_data;
-  logic [      MEM_DATA_W-1:0] miss_handler_to_cache_data;
-  logic [  (MEM_DATA_W/8)-1:0] miss_handler_to_cache_we;
+  logic                             miss_handler_valid_cdc;
+  logic                             miss_handler_ready_cdc;
+  cdc_data_t                        miss_handler_data_cdc;
+
+  logic                             miss_resp_ready;
+  logic                             miss_resp_valid;
+  rf_wb_e                           miss_resp_data;
+
+  logic      [MEM_CACHE_ADDR_W-1:0] miss_handler_to_cache_addr;
+  logic      [      MEM_DATA_W-1:0] cache_to_miss_handler_data;
+  logic      [      MEM_DATA_W-1:0] miss_handler_to_cache_data;
+  logic      [  (MEM_DATA_W/8)-1:0] miss_handler_to_cache_we;
+
 
 
   cache_controller cache_controller_inst (
-      .clk_i        (clk_cpu_i),
-      .rst_ni       (rst_ni),
-      .axi_awaddr_i (axi_awaddr_i),
-      .axi_awvalid_i(axi_awvalid_i),
-      .axi_awready_o(axi_awready_o),
-      .axi_wdata_i  (axi_wdata_i),
-      .axi_wvalid_i (axi_wvalid_i),
-      .axi_wready_o (axi_wready_o),
-      .axi_wstrb_i  (axi_wstrb_i),
-      .axi_bresp_o  (axi_bresp_o),
-      .axi_bvalid_o (axi_bvalid_o),
-      .axi_bready_i (axi_bready_i),
-      .axi_araddr_i (axi_araddr_i),
-      .axi_arvalid_i(axi_arvalid_i),
-      .axi_arready_o(axi_arready_o),
-      .axi_rdata_o  (axi_rdata_o),
-      .axi_rresp_o  (axi_rresp_o),
-      .axi_rvalid_o (axi_rvalid_o),
-      .axi_rready_i (axi_rready_i),
-      .ram_addr_o   (controller_to_cache_addr),
-      .ram_data_o   (controller_to_cache_data),
-      .ram_data_i   (cache_to_controller_data),
-      .ram_we_o     (controller_to_cache_we),
-      .cdc_data_o   (controller_data_cdc),
-      .cdc_valid_o  (controller_valid_cdc),
-      .cdc_ready_i  (controller_ready_cdc)
+      .clk_i           (clk_cpu_i),
+      .rst_ni          (rst_ni),
+      .axi_awaddr_i    (axi_awaddr_i),
+      .axi_awvalid_i   (axi_awvalid_i),
+      .axi_awready_o   (axi_awready_o),
+      .axi_wdata_i     (axi_wdata_i),
+      .axi_wvalid_i    (axi_wvalid_i),
+      .axi_wready_o    (axi_wready_o),
+      .axi_wstrb_i     (axi_wstrb_i),
+      .axi_bresp_o     (axi_bresp_o),
+      .axi_bvalid_o    (axi_bvalid_o),
+      .axi_bready_i    (axi_bready_i),
+      .axi_araddr_i    (axi_araddr_i),
+      .axi_arvalid_i   (axi_arvalid_i),
+      .axi_arready_o   (axi_arready_o),
+      .axi_rdata_o     (axi_rdata_o),
+      .axi_rresp_o     (axi_rresp_o),
+      .axi_rvalid_o    (axi_rvalid_o),
+      .axi_rready_i    (axi_rready_i),
+      .cdc_req_valid_o (controller_valid_cdc),
+      .cdc_req_data_o  (controller_data_cdc),
+      .cdc_req_ready_i (controller_ready_cdc),
+      .cdc_resp_valid_i(controller_resp_valid),
+      .cdc_resp_ready_o(controller_resp_ready),
+      .ram_addr_o      (controller_to_cache_addr),
+      .ram_data_o      (controller_to_cache_data),
+      .ram_data_i      (cache_to_controller_data),
+      .ram_we_o        (controller_to_cache_we)
   );
 
 
   cdc_handshake #(
-    .T(cdc_data_t)
-  )
-  cdc_handshake_inst (
+      .T(cdc_data_t)
+  ) controller_req (
       .clk_src_i  (clk_cpu_i),
       .rst_src_ni (rst_ni),
       .src_data_i (controller_data_cdc),
@@ -156,6 +166,21 @@ module top_cache
       .dst_ready_i(miss_handler_ready_cdc)
   );
 
+  cdc_handshake #(
+      .T(rf_wb_e)
+  ) miss_handler_resp (
+      .clk_src_i  (ui_clk),
+      .rst_src_ni (rst_ni),
+      .src_data_i (miss_resp_data),
+      .src_valid_i(miss_resp_valid),
+      .src_ready_o(miss_resp_ready),
+      .clk_dst_i  (clk_cpu_i),
+      .rst_dst_ni (rst_ni),
+      .dst_data_o (controller_resp_data),
+      .dst_valid_o(controller_resp_valid),
+      .dst_ready_i(controller_resp_ready)
+  );
+
 
   miss_handler miss_handler_inst (
       .clk_i        (ui_clk),
@@ -163,6 +188,9 @@ module top_cache
       .cdc_data_i   (miss_handler_data_cdc),
       .cdc_valid_i  (miss_handler_valid_cdc),
       .cdc_ready_o  (miss_handler_ready_cdc),
+      .resp_data_o  (miss_resp_data),
+      .resp_valid_o (miss_resp_valid),
+      .resp_ready_i (miss_resp_ready),
       .ram_addr_o   (miss_handler_to_cache_addr),
       .ram_data_i   (cache_to_miss_handler_data),
       .ram_data_o   (miss_handler_to_cache_data),

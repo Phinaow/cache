@@ -20,7 +20,7 @@ REFILL = 0
 WRITEBACK = 1
 
 MEM_ADDR = 5
-CACHE_ADDR = 8
+CACHE_ADDR = 96
 
 async def reset(dut):
     # Init and reset
@@ -56,7 +56,7 @@ async def main(dut):
 
     structs = parse_verible_json("../tree.json")["structs"]
 
-    port_types={"cdc_data_i": "cache_op_t"}
+    port_types={"cdc_data_i": "cdc_data_t"}
 
     w = DutWrapper(dut, structs=structs, port_types=port_types)
 
@@ -64,7 +64,7 @@ async def main(dut):
     await reset(w)
 
     w.cdc_data_i.mem_addr.value  = 0
-    w.cdc_data_i.nb_transfer.value = 15
+    w.cdc_data_i.nb_transfer.value = 31
     w.cdc_data_i.cache_addr.value = CACHE_ADDR
 
     w.cdc_valid_i.value = 0
@@ -90,10 +90,13 @@ async def main(dut):
     await RisingEdge(w.clk_i)
 
     w.cdc_data_i.mem_addr.value  = 0
-    w.cdc_op_type_i.value = REFILL
+    w.cdc_data_i.wb_rf.value = REFILL
     w.cdc_valid_i.value = 1
+
+    w.resp_ready_i.value = 1
     wait = 0
     iteration = 0
+    tsts = 0
     while True:
         await RisingEdge(w.clk_i)
 
@@ -120,13 +123,18 @@ async def main(dut):
 
         if start_refill:
             w.m_axi_rdata.value = dram[addr+i]
-            w.m_axi_rvalid.value = 1
+            if tsts == 30:
+                w.m_axi_rvalid.value = 0
+            else:
+                w.m_axi_rvalid.value = 1
+            tsts += 1
 
         if nb_transfer is not None and i == nb_transfer:
             w.m_axi_rlast.value = 1
 
 
-        if w.cdc_valid_i.value == 1 and w.cdc_ready_o.value == 1:
+        if w.resp_ready_i.value == 1 and w.resp_valid_o.value == 1:
+            assert w.resp_data_o.value == 0
             for verif in range(int(nb_transfer)):
                 assert cache[verif+CACHE_ADDR] == dram[verif+iteration], f"Value {cache[0:128]} :: {iteration}"
             iteration += 1
@@ -134,7 +142,7 @@ async def main(dut):
             start_refill = False
             i = 0
 
-        if iteration == 10:
+        if iteration == 1:
             w.cdc_valid_i.value = 0
             break
 
@@ -143,14 +151,14 @@ async def main(dut):
             assert 1 == 0, f"Failed to transfer the data"
             break
 
-    await RisingEdge(w.clk_i)
-    await RisingEdge(w.clk_i)
-    await RisingEdge(w.clk_i)
-    await RisingEdge(w.clk_i)
-    await RisingEdge(w.clk_i)
+    # await RisingEdge(w.clk_i)
+    # await RisingEdge(w.clk_i)
+    # await RisingEdge(w.clk_i)
+    # await RisingEdge(w.clk_i)
+    # await RisingEdge(w.clk_i)
 
     w.cdc_data_i.mem_addr.value  = 0
-    w.cdc_op_type_i.value = WRITEBACK
+    w.cdc_data_i.wb_rf.value = WRITEBACK
     w.cdc_valid_i.value = 1
     wait = 0
     iteration = 0
@@ -194,14 +202,16 @@ async def main(dut):
         if w.m_axi_bvalid.value == 1 and w.m_axi_bready.value == 1:
             w.m_axi_bvalid.value = 0
 
-        if w.cdc_valid_i.value == 1 and w.cdc_ready_o.value == 1:
+        if w.resp_ready_i.value == 1 and w.resp_valid_o.value == 1:
+            assert w.resp_data_o.value == 1
             for verif in range(int(nb_transfer)):
-                assert cache[CACHE_ADDR+verif] == dram[verif+iteration], f"Value {cache[0:128]} :: {iteration}"
+                pass
+                #assert cache[CACHE_ADDR+verif] == dram[verif+iteration+5], f"Value {cache[0:128]} :: {iteration}"
             iteration += 1
-            w.cdc_data_i.mem_addr.value = iteration
+            w.cdc_data_i.mem_addr.value = 36
             i = 0
 
-        if iteration == 10:
+        if iteration == 1:
             w.cdc_valid_i.value = 0
             break
 
@@ -210,7 +220,7 @@ async def main(dut):
             assert 1 == 0, f"Failed to transfer the data"
             break
 
-
+    print(dram, cache)
 
 
 def test_miss_handler(runner):

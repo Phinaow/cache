@@ -3,6 +3,8 @@ from cocotb.triggers import Timer, RisingEdge
 from cocotb.clock import Clock
 from cocotb import start_soon
 
+import random
+
 
 from cocotb_wrapper import *
 from verible_struct_parser import *
@@ -36,62 +38,46 @@ async def inst_clocks(clk, PERIOD):
     start_soon(Clock(clk, PERIOD, units="ns").start())
 
 
-async def from_domain_src(dut):
+async def from_domain_src(dut, transfers = 10, randomness = 10):
     nb_transfers = 0
     dut.src_data_i.value = 0
     while True:
 
-        # dut.src_data_i.value = nb_transfers
-        dut.src_valid_i.value = 1
-
         if dut.src_valid_i.value == 1 and dut.src_ready_o.value == 1:
             nb_transfers += 1
             dut.src_data_i.value = nb_transfers
-            dut.src_valid_i.value = 0
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
-            await RisingEdge(dut.clk_src_i)
+            if random.randint(0, int(randomness if randomness == 0 else 1/randomness)) == 0:
+                dut.src_valid_i.value = 0
+
+        # dut.src_data_i.value = nb_transfers
+        if random.randint(0, randomness) == 0:
+            dut.src_valid_i.value = 1
 
         await RisingEdge(dut.clk_src_i)
 
-        if nb_transfers == 10:
+        if nb_transfers == transfers:
             break
 
-async def from_domain_dst(dut):
+async def from_domain_dst(dut, transfers = 10, randomness = 10):
     nb_transfers = 0
     while True:
         await RisingEdge(dut.clk_dst_i)
 
         if dut.dst_valid_o.value == 1 and dut.dst_ready_i.value == 0:
-            # assert int(dut.dst_data_o.value) == nb_transfers, f"{int(dut.dst_data_o.value)} != {nb_transfers}"
-            await RisingEdge(dut.clk_dst_i)
-            await RisingEdge(dut.clk_dst_i)
-            await RisingEdge(dut.clk_dst_i)
-            await RisingEdge(dut.clk_dst_i)
-            await RisingEdge(dut.clk_dst_i)
-            await RisingEdge(dut.clk_dst_i)
-            await RisingEdge(dut.clk_dst_i)
-            await RisingEdge(dut.clk_dst_i)
-            dut.dst_ready_i.value = 1
+            assert int(dut.dst_data_o.value) == nb_transfers, f"{int(dut.dst_data_o.value)} != {nb_transfers}"
+            if random.randint(0, randomness) == 0:
+                dut.dst_ready_i.value = 1
+            else:
+                dut.dst_ready_i.value = 0
 
         if dut.dst_valid_o.value == 1 and dut.dst_ready_i.value == 1:
-            dut.dst_ready_i.value = 0
+            if random.randint(0, randomness) == 0:
+                dut.dst_ready_i.value = 1
+            else:
+                dut.dst_ready_i.value = 0
             nb_transfers += 1
 
-        if nb_transfers == 10:
+        if nb_transfers == transfers:
             break
 
 
@@ -126,8 +112,8 @@ async def main(dut):
     await RisingEdge(w.clk_src_i)
     await RisingEdge(w.clk_src_i)
 
-    task_dst = cocotb.start_soon(from_domain_dst(w))
-    task_src = cocotb.start_soon(from_domain_src(w))
+    task_dst = cocotb.start_soon(from_domain_dst(w, 100, 10))
+    task_src = cocotb.start_soon(from_domain_src(w, 100, 10))
 
     # On attend la fin des deux tâches
     await task_dst

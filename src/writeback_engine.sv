@@ -65,7 +65,7 @@ module writeback_engine
   end
 
   assign sample_data = axi_wvalid_o && axi_wready_i ||
-          read_ptr_d[MEM_CACHE_ADDR_W-1:0] == data_i.cache_addr;
+          read_ptr_d == '0;
 
   always_comb begin
 
@@ -74,7 +74,7 @@ module writeback_engine
     axi_wvalid_o  = 1'b0;
     axi_bready_o  = 1'b0;
     addr_ready_o  = 1'b0;
-    read_ptr_d[MEM_CACHE_ADDR_W-1:0]    = data_i.cache_addr;
+    read_ptr_d = '0;
     state_d       = state_q;
 
     unique case (state_q)
@@ -95,16 +95,16 @@ module writeback_engine
 
         read_ptr_d = read_ptr_q;
 
-        if (read_ptr_q[MEM_CACHE_ADDR_W-1:0] > data_i.cache_addr &&
-          read_ptr_q <= data_i.nb_transfer + data_i.cache_addr) begin
+        if (read_ptr_q > '0 &&
+          read_ptr_q <= data_i.nb_transfer + 1) begin
           axi_wvalid_o = 1'b1;
         end
 
-        if (read_ptr_q[MEM_CACHE_ADDR_W-1:0] == data_i.cache_addr) begin
+        if (read_ptr_q == '0) begin
           read_ptr_d = read_ptr_q + 1'b1;
         end else if (axi_wready_i) begin
 
-          if (read_ptr_q == data_i.nb_transfer + data_i.cache_addr) begin
+          if (read_ptr_q == data_i.nb_transfer + 1) begin
             axi_wlast_o = 1'b1;
             state_d     = StWaitBresp;
           end else begin
@@ -126,7 +126,7 @@ module writeback_engine
     endcase
   end
 
-  assign ram_addr_o   = read_ptr_d[MEM_CACHE_ADDR_W-1:0];
+  assign ram_addr_o   = read_ptr_d[MEM_CACHE_ADDR_W-1:0] + data_i.cache_addr;
   assign axi_wdata_o  = data_buffer;
   assign axi_awaddr_o = data_i.mem_addr;
 

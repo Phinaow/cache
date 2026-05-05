@@ -11,6 +11,10 @@ module miss_handler
     // input  rf_wb_e                           cdc_op_type_i,
     input  logic                             cdc_valid_i,
     output logic                             cdc_ready_o,
+
+    output rf_wb_e resp_data_o,
+    output logic resp_valid_o,
+    input logic resp_ready_i,
     // ----------- //
     // RAM signals
     // ----------- //
@@ -108,20 +112,62 @@ module miss_handler
   //   end
   // end
 
+  cdc_data_t cdc_data_reg;
+
+  logic start_op;
+  logic op_done;
+
+  logic resp_read;
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if(!rst_ni) begin
+      cdc_data_reg.nb_transfer <= '0;
+      cdc_data_reg.mem_addr <= '0;
+      cdc_data_reg.cache_addr <= '0;
+      cdc_data_reg.wb_rf <= REFILL;
+
+      start_op <= 1'b0;
+      op_done <= 1'b0;
+
+      resp_read <= 1'b1;
+    end else begin
+      if(cdc_valid_i && cdc_ready_o) begin
+        cdc_data_reg <= cdc_data_i;
+        start_op <= 1'b1;
+        op_done <= 1'b0;
+        resp_read <= 1'b0;
+      end
+
+      if(refill_ready || writeback_ready) begin
+        op_done <= 1'b1;
+        start_op <= 1'b0;
+        resp_read <= 1'b0;
+      end
+
+      if (resp_ready_i && resp_valid_o) resp_read <= 1'b1;
+    end
+  end
+
   always_comb begin
 
-    unique case (cdc_data_i.wb_rf)
+    cdc_ready_o = resp_read;
+
+    resp_valid_o = op_done && !resp_read;
+
+    unique case (cdc_data_reg.wb_rf)
       REFILL: begin
+        resp_data_o = REFILL;
+
         ram_addr_o = ram_addr_from_refill;
 
-        refill_valid = cdc_valid_i;
-        cdc_ready_o = refill_ready;
+        refill_valid = start_op;
+        // cdc_ready_o = refill_ready;
 
         writeback_valid = 1'b0;
       end
 
       WRITEBACK: begin
-
+        resp_data_o = WRITEBACK;
         // if(do_rf_after_wb) begin
         //   ram_addr_o = ram_addr_from_refill;
 
@@ -134,8 +180,8 @@ module miss_handler
 
         refill_valid = 1'b0;
 
-        writeback_valid = cdc_valid_i;
-        cdc_ready_o = writeback_ready;
+        writeback_valid = start_op;
+        // cdc_ready_o = writeback_ready;
         //   cdc_ready_o = 1'b0;
         // end
       end
@@ -149,7 +195,7 @@ module miss_handler
   refill_engine refill_engine_inst (
       .clk_i        (clk_i),
       .rst_ni       (rst_ni),
-      .data_i       (cdc_data_i),
+      .data_i       (cdc_data_reg),
       .addr_valid_i (refill_valid),
       .addr_ready_o (refill_ready),
       .ram_addr_o   (ram_addr_from_refill),
@@ -170,7 +216,7 @@ module miss_handler
   writeback_engine writeback_engine_inst (
       .clk_i        (clk_i),
       .rst_ni       (rst_ni),
-      .data_i       (cdc_data_i),
+      .data_i       (cdc_data_reg),
       .addr_valid_i (writeback_valid),
       .addr_ready_o (writeback_ready),
       .ram_addr_o   (ram_addr_from_writeback),

@@ -12,7 +12,9 @@ def runner():
         "cdc_handshake.sv",
         "miss_handler.sv",
         "plru.sv",
-        "cache_controller.sv"
+        "cache_controller.sv",
+        "hit_detection.sv",
+        "transaction.sv"
     ]
 
     rtl_path = (Path(__file__) / "../../src").resolve()
@@ -21,7 +23,7 @@ def runner():
     runner = get_runner("verilator")
     runner.build(
         sources=sources,
-        hdl_toplevel="cdc_handshake",
+        hdl_toplevel="cache_controller",
         build_args = [
             "--trace-vcd",
             "--trace-structs",

@@ -2,3 +2,4 @@ cocotb==2.0.1
 cocotb-test==0.2.6
 numpy
 pytest
+bitstring

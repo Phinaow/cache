@@ -588,4 +588,6 @@ class DutWrapper(HierarchyObject):
             await w(RisingEdge(w.clk_i))
             await w(Timer(10, units="ns"))
         """
+
+        self.commit()
         return _AwaitableCommit(wrapper=self, trigger=trigger)

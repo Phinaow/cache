@@ -3,6 +3,8 @@ from cocotb.triggers import Timer, RisingEdge
 from cocotb.clock import Clock
 from cocotb import start_soon
 
+import random
+
 
 from generated_config import result
 from cocotb_wrapper import DutWrapper
@@ -48,13 +50,26 @@ async def main(dut):
     await RisingEdge(w.clk_i)
 
     w.access_i.value = 0
+    i = 0
+    w.access_i.value = random.randint(0,3)
+    w.access_valid_i.value = 1
+    # w.lru_way_ready_i.value = 1
+    while True:
 
-    for i in range(10):
-        w.access_i.value = 2**0
-        await RisingEdge(w.clk_i)
-        w.access_i.value = 2**2
+
+        if w.access_ready_o.value == 1 and w.access_valid_i.value == 1:
+            w.access_i.value = random.randint(0,3)
+            w.access_valid_i.value = 1
+            i += 1
+
+        if i == 5:
+            w.access_valid_i.value = 0
+            break
         await RisingEdge(w.clk_i)
 
+    await RisingEdge(w.clk_i)
+    await RisingEdge(w.clk_i)
+    await RisingEdge(w.clk_i)
     await RisingEdge(w.clk_i)
     await RisingEdge(w.clk_i)
     await RisingEdge(w.clk_i)

@@ -4,7 +4,7 @@ from cocotb.handle import SimHandleBase
 from cocotb.triggers import RisingEdge
 from cocotb import start_soon
 from typing import Any, Generic, List, Optional, Type, TypeVar
-from ..util import *
+from util import until
 import random
 
 T = TypeVar("T")
@@ -60,6 +60,14 @@ class ChannelDriver(Driver, Generic[T]):
             return False
         return len(self.queue) >= self.capacity
 
+    def empty(self) -> bool:
+        """Check if the queue is empty"""
+        return (len(self.queue) == 0)
+
+    @property
+    def nelem(self):
+        return len(self.queue)
+
     async def assert_data_stable(self):
         """
         Ensure that the data signal is constant while valid is asserted but
@@ -68,10 +76,11 @@ class ChannelDriver(Driver, Generic[T]):
         await until(self.clk, lambda: self.rst.value == 0)
         while True:
             await until(self.clk, lambda: self.valid.value == 1)
-            expected = get_value(self.data, self.dtype)
+            expected = self.data.value
             while self.ready.value == 0:
-                actual = get_value(self.data, self.dtype)
-                assert_equal_value(actual, expected)
+                actual = self.data.value
+                assert self.valid.value == 0, f'Valid goes from 1 to 0 before the handshake'
+                assert actual == expected, f'Value change before the handshake while valid = 1\n {actual} != {expected}'
                 await RisingEdge(self.clk)
 
     @classmethod
@@ -79,6 +88,7 @@ class ChannelDriver(Driver, Generic[T]):
         cls: Type[U],
         dut: SimHandleBase,
         prefix: Optional[str] = None,
+        data_prefix: Optional[str] = None,
         index: Optional[int] = None,
         *args,
         direction: str = "master",
@@ -104,15 +114,16 @@ class ChannelDriver(Driver, Generic[T]):
         Returns:
             An instance of this driver bound to the specified DUT signals.
         """
-        prefix = "" if prefix is None else f"{prefix}_"
+        data_prefix = "" if data_prefix is None else f"{"" if prefix is None else prefix}{data_prefix}_"
+        prefix = "" if prefix is None else f"{prefix}"
 
         if direction == "master":
-            data = getattr(dut, f"{prefix}i")
+            data = getattr(dut, f"{data_prefix}i")
             valid = getattr(dut, f"{prefix}valid_i")
             ready = getattr(dut, f"{prefix}ready_o")
 
         elif direction == "slave":
-            data = getattr(dut, f"{prefix}o")
+            data = getattr(dut, f"{data_prefix}o")
             valid = getattr(dut, f"{prefix}valid_o")
             ready = getattr(dut, f"{prefix}ready_i")
 
@@ -126,7 +137,7 @@ class ChannelDriver(Driver, Generic[T]):
 
         return cls(
             clk=dut.clk_i,
-            rst=dut.rst_i,
+            rst=dut.rst_ni,
             data=data,
             valid=valid,
             ready=ready,
@@ -163,22 +174,22 @@ class MasterChannelDriver(ChannelDriver[T]):
         data if the queue is non-empty and a random jitter condition is met.
         Waits for receiver readiness before completing each transfer.
         """
-        set_value(self.data, self.default)
+        self.data.value = self.default
         self.valid.value = 0
-        await until(self.clk, lambda: self.rst.value == 0)
+        await until(self.clk, lambda: self.rst.value == 1)
         while (not self.interrupted) or self.queue:
             num = random.randint(0, self.jitter)
             if self.queue and num == 0:
-                set_value(self.data, self.queue[0])
+                self.data.value = self.queue[0]
                 self.valid.value = 1
-                await until(self.clk, lambda: self.ready.value == 1)
+                await until(self.clk, lambda: self.ready.value == 1 or self.interrupted)
                 self.queue.pop(0)
                 self.transfers += 1
             else:
-                set_value(self.data, self.default)
+                self.data.value = self.default
                 self.valid.value = 0
                 await RisingEdge(self.clk)
-        set_value(self.data, self.default)
+        self.data.value = self.default
         self.valid.value = 0
 
     async def push(self, item: T):
@@ -218,14 +229,21 @@ class SlaveChannelDriver(ChannelDriver[T]):
         data when both valid and ready are asserted, storing it in the queue.
         """
         self.ready.value = 0
-        await until(self.clk, lambda: self.rst.value == 0)
+        await until(self.clk, lambda: self.rst.value == 1)
         while not self.interrupted:
             num = random.randint(0, self.jitter)
             self.ready.value = (not self.full() and num == 0)
-            await RisingEdge(self.clk)
             if self.valid.value == 1 and self.ready.value == 1:
-                self.queue.append(get_value(self.data, self.dtype))
+                self.queue.append(self.data.value)
                 self.transfers += 1
+            # if (not self.full() and num == 0):
+            #     self.ready.value = 1
+            #     await until(self.clk, lambda: self.valid.value == 1 or self.interrupted)
+            #     self.queue.append(self.data.value)
+            #     self.transfers += 1
+            # else:
+                #self.ready.value = 0
+            await RisingEdge(self.clk)
         self.ready.value = 0
 
     async def pop(self) -> T:
