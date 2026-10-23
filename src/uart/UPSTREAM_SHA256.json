@@ -1,0 +1,16 @@
+{
+  "source": "https://github.com/Phinaow/uart_to_axi.git",
+  "revision": null,
+  "revision_note": "The source repository had no commits when this validated snapshot was imported.",
+  "files": {
+    "data_to_axi.sv": "d729cf43ce1ed2702b10966dbace1edf755e2ddba77c923505d394f99fe8c91c",
+    "fifo.sv": "cec75b94e60c9ad176ea1171563fbd48691d393957a078604dbcd396ddb5d817",
+    "r_buffer.sv": "c674bc6324cec8c7cb0f7baff99d0ab984c6cad25f5e527c0e2eab18993f7467",
+    "t_buffer.sv": "8eb9f2d7bf192a025d7fc9501b0968c4c0ebab0624c763ef0218fa23f8ef0e84",
+    "top_uart.sv": "a012c640e3a5cd4f57f359b961b04bd1b514d7c4a5bfbb58874e3ab08b6fb117",
+    "uart_rx.sv": "42e234ec953c0331ccbac251d5d4918b83668d3c0c79cdf864f131fa291433ef",
+    "uart_to_axi.sv": "4e60ef870fc645abfe327d649f036744c82682b9f4ba6a24f1108313ab7239f9",
+    "uart_to_cache.sv": "b7474a1ea8289de046f5c99951eac93ce94b1a2bbd059acbb2189267d7d5804e",
+    "uart_tx.sv": "2d35784f70a31a22dd90dc99fa8d898b6a541c1e1eee074b140a28e21bb44ad3"
+  }
+}

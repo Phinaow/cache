@@ -1,159 +1,126 @@
+"""Tags and replacement: allocation, dirty ownership and error preservation."""
 import cocotb
-from cocotb.triggers import Timer, RisingEdge
-from cocotb.clock import Clock
-from cocotb import start_soon
+from cocotb.triggers import Timer
 
 
-from cocotb_wrapper import *
-from verible_struct_parser import *
-import generated_config as config
+class TagBench:
+    def __init__(self, dut):
+        self.dut = dut
+        self.commands = []
+        self.events = []
 
-import logging
+    async def cycle(self):
+        dut = self.dut
+        dut.clk_i.value = 0
+        await Timer(5, unit="ns")
+        hit = bool(dut.hit_o.value)
+        way = int(dut.hit_addr_o.value)
+        status = int(dut.lookup_status_o.value)
+        if dut.access_valid_o.value:
+            self.events.append(int(dut.access_data_o.value))
+        command = None
+        if dut.cdc_req_valid_o.value:
+            command = tuple(int(dut[f"cdc_req_data_o.{field}"].value)
+                            for field in ("wb_rf", "mem_addr", "cache_addr", "nb_transfer"))
+        dut.clk_i.value = 1
+        await Timer(5, unit="ns")
+        return hit, way, status, command
 
-from util import *
+    async def reset(self):
+        dut = self.dut
+        for name in ("awvalid_i", "awaddr_i", "arvalid_i", "araddr_i", "access_done_i",
+                     "write_commit_i", "commit_way_i", "cdc_req_ready_i", "cdc_resp_valid_i"):
+            getattr(dut, name).value = 0
+        dut.cdc_resp_data_i.value = 0
+        dut.access_ready_i.value = 1
+        dut.lru_way_valid_i.value = 1
+        dut.lru_way_data_i.value = 0
+        dut.rst_ni.value = 0
+        for _ in range(3):
+            await self.cycle()
+        dut.rst_ni.value = 1
+        await self.cycle()
 
-import random
-
-logger = logging.getLogger("cocotb.test")
-logger.setLevel(logging.DEBUG)
-
-PERIOD = 20
-
-CACHE_ADDR = 15
-MEM_ADDR = 7
-
-config.TAG_SIZE = 3
-
-async def reset(clk, rst):
-    # Init and reset
-    rst.value = 0
-    await Timer(1, units="ns")
-    await RisingEdge(clk)
-    rst.value = 1
-    await RisingEdge(clk)
-
-
-
-async def inst_clocks(clk, PERIOD):
-    """this instantiates the axi environement & clocks"""
-    start_soon(Clock(clk, PERIOD, units="ns").start())
-
+    async def access(self, tag, write=False, error_operation=None):
+        dut = self.dut
+        dut.awvalid_i.value = int(write)
+        dut.arvalid_i.value = int(not write)
+        dut.awaddr_i.value = tag
+        dut.araddr_i.value = tag
+        pending = None
+        delay = 0
+        held_command = None
+        for cycle in range(100):
+            dut.cdc_req_ready_i.value = int(cycle % 5 == 0 and pending is None)
+            dut.cdc_resp_valid_i.value = int(pending is not None and delay == 0)
+            if pending is not None:
+                dut["cdc_resp_data_i.wb_rf"].value = pending[0]
+                dut["cdc_resp_data_i.status"].value = 2 if pending[0] == error_operation else 0
+            hit, way, status, command = await self.cycle()
+            if held_command is not None:
+                assert command == held_command, "Miss command changed before acceptance"
+            held_command = command if command is not None and not dut.cdc_req_ready_i.value else None
+            if pending is not None and delay:
+                delay -= 1
+            if command is not None and dut.cdc_req_ready_i.value:
+                self.commands.append(command)
+                pending = command
+                delay = 4
+                # A different PLRU output must not change the reserved victim.
+                dut.lru_way_data_i.value = (int(dut.lru_way_data_i.value) + 1) % 8
+            if dut.cdc_resp_valid_i.value:
+                pending = None
+            if hit:
+                dut.awvalid_i.value = 0
+                dut.arvalid_i.value = 0
+                dut.cdc_resp_valid_i.value = 0
+                if status == 0:
+                    dut.access_done_i.value = 1
+                    dut.write_commit_i.value = int(write)
+                    dut.commit_way_i.value = way
+                await self.cycle()
+                dut.access_done_i.value = 0
+                dut.write_commit_i.value = 0
+                await self.cycle()
+                return way, status
+        raise AssertionError(f"Tag lookup timeout: tag={tag}")
 
 
 @cocotb.test()
-async def main(dut):
-    # structs = parse_verible_json("../tree.json")
-    # w = wrap_dut(dut, structs)
-    # w.register_struct_port("data_i", "cache_op_t")
-
-    structs = parse_verible_json("../tree.json")["structs"]
-    w = DutWrapper(dut, structs=structs, port_types={"cdc_req_data_o": "cdc_data_t"})
-
-    await inst_clocks(w.clk_i, PERIOD)
-    await reset(w.clk_i, w.rst_ni)
-
-    i = 0
-    jitter = 50
-
-    w.awvalid_i.value = 0
-    w.awaddr_i.value = 0
-    w.arvalid_i.value = 0
-    w.araddr_i.value = 0
+async def allocate_hit_and_replace_dirty_lines(dut):
+    bench = TagBench(dut)
+    await bench.reset()
+    for tag in range(8):
+        assert await bench.access(tag, write=True) == (tag, 0)
+    assert len(bench.events) == 8
+    assert [command[0] for command in bench.commands] == [0] * 8
+    for _ in range(3):
+        for tag in range(8):
+            assert await bench.access(tag) == (tag, 0)
+    assert len(bench.events) == 32, "Every hit must update PLRU, not only the first hit"
+    before = len(bench.commands)
+    dut.lru_way_data_i.value = 3
+    assert await bench.access(40) == (3, 0)
+    assert bench.commands[before:] == [(1, 3 * 1024, 3 * 64, 63), (0, 40 * 1024, 3 * 64, 63)]
 
 
-
-    w.cdc_req_ready_i.value = 0
-
-    w.cdc_resp_valid_i.value = 0
-
-    w.access_ready_i.value = 1
-
-    start_new_tr = True
-
-    write_before = False
-
-    while True:
-        await RisingEdge(w.clk_i)
-
-        # if w.cdc_req_valid_o.value == 1 and w.cdc_req_ready_i.value == 1:
-        #     w.cdc_req_ready_i.value = 0
-
-        #     await RisingEdge(w.clk_i)
-        #     await RisingEdge(w.clk_i)
-        #     await RisingEdge(w.clk_i)
-        #     await RisingEdge(w.clk_i)
-
-        #     w.cdc_resp_valid_i.value = 1
-        # elif w.cdc_req_valid_o.value == 1:
-        #     w.cdc_req_ready_i.value = 1
-
-        # if w.cdc_resp_valid_i.value == 1 and w.cdc_resp_ready_o.value == 1:
-        #     w.cdc_resp_valid_i.value = 0
-
-        # if w.hit_o.value == 1:
-        #     w.awaddr_i.value = random.randint(0, 2**config.TAG_SIZE) # 2**i
-        #     i += 1
-
-        # if i == 15:
-        #     break
-
-        if w.access_valid_o.value == 1:
-            w.access_ready_i.value = 0
-            w.lru_way_valid_i.value = 0
-            w.lru_way_data_i.value = random.randint(0, 3)
-        else:
-            w.access_ready_i.value = 1
-            w.lru_way_valid_i.value = 1
-
-        if(random.randint(0, jitter) == 0 and start_new_tr):
-            start_new_tr = False
-            tr_type = random.randint(0, 1)
-            if(tr_type == 0):
-                w.awvalid_i.value = 1
-                last_write_addr = random.randint(0, 2**config.TAG_SIZE)
-                w.awaddr_i.value = last_write_addr
-                write_before = True
-            else:
-                w.arvalid_i.value = 1
-                last_addr_read = random.randint(0, 2**config.TAG_SIZE)
-                w.araddr_i.value = last_addr_read
-        elif w.hit_o.value == 1:
-            w.awvalid_i.value = 0
-            w.arvalid_i.value = 0
-
-        if w.cdc_req_valid_o.value == 1:
-            w.cdc_req_ready_i.value = 1
-
-        if w.cdc_req_valid_o.value == 1 and w.cdc_req_ready_i.value == 1:
-            w.cdc_req_ready_i.value = 0
-            # assert int(w.cdc_req_data_o.mem_addr.value) == int(w.awaddr_i.value) << config.WORD_POS, \
-            #     f"{int(w.cdc_req_data_o.mem_addr.value)} != {int(w.awaddr_i.value) << config.WORD_POS}"
-
-            await RisingEdge(w.clk_i)
-            await RisingEdge(w.clk_i)
-            await RisingEdge(w.clk_i)
-            await RisingEdge(w.clk_i)
-
-            w.cdc_resp_valid_i.value = 1
-
-        if w.cdc_resp_valid_i.value == 1 and w.cdc_resp_ready_o.value == 1:
-            w.cdc_resp_valid_i.value = 0
-
-        if w.hit_o.value == 1:
-            start_new_tr = True
-            # w.awaddr_i.value = random.randint(0, 2**config.TAG_SIZE) # 2**i
-            i += 1
-
-        if i == 100:
-            break
-
-
-
+@cocotb.test()
+async def failed_writeback_preserves_dirty_victim_and_failed_refill_is_invalid(dut):
+    bench = TagBench(dut)
+    await bench.reset()
+    for tag in range(8):
+        await bench.access(tag, write=True)
+    dut.lru_way_data_i.value = 2
+    before = len(bench.commands)
+    assert (await bench.access(20, error_operation=1))[1] == 2
+    assert len(bench.commands) == before + 1, "Refill followed a failed writeback"
+    assert await bench.access(2) == (2, 0), "The dirty victim was lost"
+    dut.lru_way_data_i.value = 2
+    assert (await bench.access(20, error_operation=0))[1] == 2
+    before = len(bench.commands)
+    assert (await bench.access(20))[1] == 0
+    assert len(bench.commands) == before + 1, "Failed refill left a false hit"
 
 
 def test_hit_detection(runner):
-    runner.test(
-        hdl_toplevel="hit_detection",
-        test_module=__name__,
-        test_args=["--trace"]
-    )
+    runner.test(hdl_toplevel="hit_detection", test_module=__name__, test_args=["--trace"])

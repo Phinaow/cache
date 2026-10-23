@@ -8,11 +8,10 @@ module miss_handler
     input  logic                             rst_ni,
     // Control signals
     input  cdc_data_t                        cdc_data_i,
-    // input  rf_wb_e                           cdc_op_type_i,
     input  logic                             cdc_valid_i,
     output logic                             cdc_ready_o,
 
-    output rf_wb_e resp_data_o,
+    output cache_resp_t resp_data_o,
     output logic resp_valid_o,
     input logic resp_ready_i,
     // ----------- //
@@ -20,6 +19,7 @@ module miss_handler
     // ----------- //
     // Addr
     output logic      [MEM_CACHE_ADDR_W-1:0] ram_addr_o,
+    output logic ram_en_o,
     input  logic      [      MEM_DATA_W-1:0] ram_data_i,
     output logic      [      MEM_DATA_W-1:0] ram_data_o,
     output logic      [  (MEM_DATA_W/8)-1:0] ram_we_o,
@@ -73,168 +73,79 @@ module miss_handler
     output logic                             m_axi_rready
 );
 
-  logic [MEM_CACHE_ADDR_W-1:0] ram_addr_from_refill;
-  logic [MEM_CACHE_ADDR_W-1:0] ram_addr_from_writeback;
+  typedef enum logic [1:0] {Idle, Active, Response} state_t;
+  state_t state_q;
+  cdc_data_t command_q;
+  cache_resp_t response_q;
+  logic refill_done, writeback_done;
+  logic [1:0] refill_status, writeback_status;
+  logic [MEM_CACHE_ADDR_W-1:0] refill_address, writeback_address;
 
-  // Unused AXI signals
-  assign m_axi_awid    = '0;
-  assign m_axi_awlock  = 1'b0;
+  assign cdc_ready_o = rst_ni && state_q == Idle;
+  assign resp_valid_o = rst_ni && state_q == Response;
+  assign resp_data_o = response_q;
+  assign ram_en_o = state_q == Active;
+  assign ram_addr_o = command_q.wb_rf == REFILL ? refill_address : writeback_address;
+
+  // This cache issues one memory transaction at a time, always with ID zero.
+  assign m_axi_awid = '0;
+  assign m_axi_awlock = '0;
   assign m_axi_awcache = '0;
-  assign m_axi_awprot  = '0;
-  assign m_axi_awqos   = '0;
-
-  assign m_axi_arid    = '0;
-  assign m_axi_arlock  = 1'b0;
+  assign m_axi_awprot = '0;
+  assign m_axi_awqos = '0;
+  assign m_axi_arid = '0;
+  assign m_axi_arlock = '0;
   assign m_axi_arcache = '0;
-  assign m_axi_arprot  = '0;
-  assign m_axi_arqos   = '0;
+  assign m_axi_arprot = '0;
+  assign m_axi_arqos = '0;
 
-  // cache_op_t tr_data;
-
-  logic refill_valid;
-  logic refill_ready;
-
-  logic writeback_valid;
-  logic writeback_ready;
-
-  // assign tr_data.mem_addr = cdc_data_i.addr;
-  // assign tr_data.nb_transfer = 8'd127;
-  // assign tr_data.cache_addr = '0;
-
-  // logic do_rf_after_wb;
-
-  // always_ff @(posedge clk_i or negedge rst_ni) begin
-  //   if(!rst_ni) begin
-  //     do_rf_after_wb <= 1'b0;
-  //   end else begin
-  //     if(writeback_valid && writeback_ready) do_rf_after_wb <= 1;
-  //     if(refill_ready && refill_valid) do_rf_after_wb <= 1'b0;
-  //   end
-  // end
-
-  cdc_data_t cdc_data_reg;
-
-  logic start_op;
-  logic op_done;
-
-  logic resp_read;
-
-  always_ff @(posedge clk_i or negedge rst_ni) begin
-    if(!rst_ni) begin
-      cdc_data_reg.nb_transfer <= '0;
-      cdc_data_reg.mem_addr <= '0;
-      cdc_data_reg.cache_addr <= '0;
-      cdc_data_reg.wb_rf <= REFILL;
-
-      start_op <= 1'b0;
-      op_done <= 1'b0;
-
-      resp_read <= 1'b1;
+  always_ff @(posedge clk_i) begin
+    if (!rst_ni) begin
+      state_q <= Idle;
+      command_q <= '0;
+      response_q <= '0;
     end else begin
-      if(cdc_valid_i && cdc_ready_o) begin
-        cdc_data_reg <= cdc_data_i;
-        start_op <= 1'b1;
-        op_done <= 1'b0;
-        resp_read <= 1'b0;
-      end
-
-      if(refill_ready || writeback_ready) begin
-        op_done <= 1'b1;
-        start_op <= 1'b0;
-        resp_read <= 1'b0;
-      end
-
-      if (resp_ready_i && resp_valid_o) resp_read <= 1'b1;
+      case (state_q)
+        Idle: if (cdc_valid_i && cdc_ready_o) begin
+          command_q <= cdc_data_i;
+          state_q <= Active;
+        end
+        Active: if (refill_done || writeback_done) begin
+          response_q.wb_rf <= command_q.wb_rf;
+          response_q.status <= command_q.wb_rf == REFILL ? refill_status : writeback_status;
+          state_q <= Response;
+        end
+        Response: if (resp_ready_i) state_q <= Idle;
+        default: state_q <= Idle;
+      endcase
     end
   end
 
-  always_comb begin
-
-    cdc_ready_o = resp_read;
-
-    resp_valid_o = op_done && !resp_read;
-
-    unique case (cdc_data_reg.wb_rf)
-      REFILL: begin
-        resp_data_o = REFILL;
-
-        ram_addr_o = ram_addr_from_refill;
-
-        refill_valid = start_op;
-        // cdc_ready_o = refill_ready;
-
-        writeback_valid = 1'b0;
-      end
-
-      WRITEBACK: begin
-        resp_data_o = WRITEBACK;
-        // if(do_rf_after_wb) begin
-        //   ram_addr_o = ram_addr_from_refill;
-
-        //   refill_valid = cdc_valid_i;
-        //   cdc_ready_o = refill_ready;
-
-        //   writeback_valid = 1'b0;
-        // end else begin
-        ram_addr_o = ram_addr_from_writeback;
-
-        refill_valid = 1'b0;
-
-        writeback_valid = start_op;
-        // cdc_ready_o = writeback_ready;
-        //   cdc_ready_o = 1'b0;
-        // end
-      end
-
-      default: ;
-    endcase
-
-  end
-
-
   refill_engine refill_engine_inst (
-      .clk_i        (clk_i),
-      .rst_ni       (rst_ni),
-      .data_i       (cdc_data_reg),
-      .addr_valid_i (refill_valid),
-      .addr_ready_o (refill_ready),
-      .ram_addr_o   (ram_addr_from_refill),
-      .ram_data_o   (ram_data_o),
-      .ram_we_o     (ram_we_o),
-      .axi_araddr_o (m_axi_araddr),
-      .axi_arlen_o  (m_axi_arlen),
-      .axi_arsize_o (m_axi_arsize),
-      .axi_arburst_o(m_axi_arburst),
-      .axi_arvalid_o(m_axi_arvalid),
-      .axi_arready_i(m_axi_arready),
-      .axi_rdata_i  (m_axi_rdata),
-      .axi_rlast_i  (m_axi_rlast),
-      .axi_rvalid_i (m_axi_rvalid),
-      .axi_rready_o (m_axi_rready)
+      .clk_i(clk_i), .rst_ni(rst_ni), .data_i(command_q),
+      .addr_valid_i(state_q == Active && command_q.wb_rf == REFILL),
+      .addr_ready_o(refill_done), .status_o(refill_status),
+      .ram_addr_o(refill_address), .ram_data_o(ram_data_o), .ram_we_o(ram_we_o),
+      .axi_araddr_o(m_axi_araddr), .axi_arlen_o(m_axi_arlen),
+      .axi_arsize_o(m_axi_arsize), .axi_arburst_o(m_axi_arburst),
+      .axi_arvalid_o(m_axi_arvalid), .axi_arready_i(m_axi_arready),
+      .axi_rdata_i(m_axi_rdata),
+      .axi_rresp_i((m_axi_rid == 0) ? m_axi_rresp : AXI_SLVERR),
+      .axi_rlast_i(m_axi_rlast), .axi_rvalid_i(m_axi_rvalid),
+      .axi_rready_o(m_axi_rready)
   );
 
   writeback_engine writeback_engine_inst (
-      .clk_i        (clk_i),
-      .rst_ni       (rst_ni),
-      .data_i       (cdc_data_reg),
-      .addr_valid_i (writeback_valid),
-      .addr_ready_o (writeback_ready),
-      .ram_addr_o   (ram_addr_from_writeback),
-      .ram_data_i   (ram_data_i),
-      .axi_awaddr_o (m_axi_awaddr),
-      .axi_awlen_o  (m_axi_awlen),
-      .axi_awsize_o (m_axi_awsize),
-      .axi_awburst_o(m_axi_awburst),
-      .axi_awvalid_o(m_axi_awvalid),
-      .axi_awready_i(m_axi_awready),
-      .axi_wdata_o  (m_axi_wdata),
-      .axi_wstrb_o  (m_axi_wstrb),
-      .axi_wlast_o  (m_axi_wlast),
-      .axi_wvalid_o (m_axi_wvalid),
-      .axi_wready_i (m_axi_wready),
-      .axi_bresp_i  (m_axi_bresp),
-      .axi_bvalid_i (m_axi_bvalid),
-      .axi_bready_o (m_axi_bready)
+      .clk_i(clk_i), .rst_ni(rst_ni), .data_i(command_q),
+      .addr_valid_i(state_q == Active && command_q.wb_rf == WRITEBACK),
+      .addr_ready_o(writeback_done), .status_o(writeback_status),
+      .ram_addr_o(writeback_address), .ram_data_i(ram_data_i),
+      .axi_awaddr_o(m_axi_awaddr), .axi_awlen_o(m_axi_awlen),
+      .axi_awsize_o(m_axi_awsize), .axi_awburst_o(m_axi_awburst),
+      .axi_awvalid_o(m_axi_awvalid), .axi_awready_i(m_axi_awready),
+      .axi_wdata_o(m_axi_wdata), .axi_wstrb_o(m_axi_wstrb), .axi_wlast_o(m_axi_wlast),
+      .axi_wvalid_o(m_axi_wvalid), .axi_wready_i(m_axi_wready),
+      .axi_bresp_i((m_axi_bid == 0) ? m_axi_bresp : AXI_SLVERR),
+      .axi_bvalid_i(m_axi_bvalid), .axi_bready_o(m_axi_bready)
   );
-
 endmodule

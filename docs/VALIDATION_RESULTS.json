@@ -1,0 +1,79 @@
+{
+  "date": "2026-10-22",
+  "simulation": {
+    "pytest_passed": 44,
+    "log": "sim_build/resumed_regression.log",
+    "cocotb": "2.0.1",
+    "verilator": "5.053 devel v5.052-537-g2fa781df8"
+  },
+  "fpga": {
+    "sim_build/vivado/fpga_ip": {
+      "setup_slack_ns": 0.912,
+      "hold_slack_ns": 0.021,
+      "pulse_width_slack_ns": 0.0,
+      "setup_failures": 0,
+      "hold_failures": 0,
+      "pulse_width_failures": 0,
+      "cdc_warnings": [
+        [
+          "CDC-8",
+          "2"
+        ]
+      ],
+      "drc_warnings": [
+        "BUFC-1",
+        "REQP-1709"
+      ],
+      "mailbox_skew_slacks_ns": [
+        8.959,
+        9.123
+      ],
+      "bitstream": "sim_build/vivado/fpga_ip/cache_fpga.runs/impl_1/uart_to_cache.bit",
+      "sha256": "ff150c58e8078037b12dc7b248d7f12ef86d11f508c874cbc4dafd116c994403"
+    },
+    "sim_build/vivado/fpga_rtl": {
+      "setup_slack_ns": 0.912,
+      "hold_slack_ns": 0.045,
+      "pulse_width_slack_ns": 0.0,
+      "setup_failures": 0,
+      "hold_failures": 0,
+      "pulse_width_failures": 0,
+      "cdc_warnings": [
+        [
+          "CDC-8",
+          "2"
+        ]
+      ],
+      "drc_warnings": [
+        "BUFC-1",
+        "REQP-1709"
+      ],
+      "mailbox_skew_slacks_ns": [
+        9.125,
+        9.298
+      ],
+      "bitstream": "sim_build/vivado/fpga_rtl/cache_fpga.runs/impl_1/uart_to_cache.bit",
+      "sha256": "7dd4fb1d6f7bab980dc315ee3d65e26697e6212b54fa9c7c6d48e58de1a8e8f7"
+    }
+  },
+  "board": {
+    "ip": {
+      "result": "PASS",
+      "backend": "ip",
+      "port": "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A904CZUE-if00-port0",
+      "commands": 1781,
+      "words": 258,
+      "random_operations": 1000,
+      "seconds": 28.467
+    },
+    "rtl": {
+      "result": "PASS",
+      "backend": "rtl",
+      "port": "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A904CZUE-if00-port0",
+      "commands": 1781,
+      "words": 258,
+      "random_operations": 1000,
+      "seconds": 28.465
+    }
+  }
+}

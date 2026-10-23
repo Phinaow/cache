@@ -1,8 +1,41 @@
-.py_venv
-__pycache__
-.pytest_cache
-.vscode
-tree.json
-sim_build/
-vivado/
-uart_src/
+# Local shells and editor settings
+.bash_history
+.bashrc
+/AGENTS.md
+.vscode/
+*~
+
+# Python environments and caches
+.venv/
+.py_venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+
+# ADAM is maintained in its own repository
+/adam/
+
+# UART development repository; the validated RTL snapshot is vendored in src/uart
+/uart_src/
+
+# Generated simulation and FPGA artifacts
+/sim_build/
+/.Xil/
+/vivado/.Xil/
+/vivado/cache_multiple_lines/
+# Superseded local Vivado exports; scripts/build_fpga.tcl is the reproducible flow
+/vivado/board.xdc
+/vivado/ips.tcl
+/vivado/mig.xdc
+/vivado/mig_ip.tcl
+*.jou
+*.log
+*.pb
+*.wdb
+*.str
+*.bit
+*.ltx
+
+# Local inspection output
+/tree.json

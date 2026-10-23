@@ -1,1 +1,13 @@
-cache_pkg.sv
+src/cache_pkg.sv
+src/reset_sync.sv
+src/cdc_handshake.sv
+src/plru.sv
+src/transaction.sv
+src/hit_detection.sv
+src/cache_controller.sv
+src/refill_engine.sv
+src/writeback_engine.sv
+src/miss_handler.sv
+src/bl_mem.sv
+src/true_dual_port_ram.sv
+src/cache_core.sv

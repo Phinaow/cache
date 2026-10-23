@@ -4,9 +4,12 @@ module writeback_engine
     input logic clk_i,
     input logic rst_ni,
 
+    // The caller holds the command and addr_valid_i until addr_ready_o.
+    // addr_ready_o denotes completion (including B), not early acceptance.
     input  cdc_data_t             data_i,
     input  logic                  addr_valid_i,
     output logic                  addr_ready_o,
+    output logic [1:0]            status_o,
 
     output logic [MEM_CACHE_ADDR_W-1:0] ram_addr_o,
     input  logic [      MEM_DATA_W-1:0] ram_data_i,
@@ -42,13 +45,17 @@ module writeback_engine
   logic [MEM_DATA_W-1:0] data_buffer;
 
   logic sample_data;
+  logic [MEM_CACHE_ADDR_W:0] total_beats;
 
-  assign axi_awlen_o   = data_i.nb_transfer; // 8'd127;
-  assign axi_awsize_o  = 3'd4;
+  // nb_transfer follows AXI AxLEN: zero denotes one beat.
+  assign total_beats  = (MEM_CACHE_ADDR_W+1)'(data_i.nb_transfer) + 1'b1;
+  assign axi_awlen_o   = data_i.nb_transfer;
+  assign axi_awsize_o  = 3'($clog2(MEM_DATA_W / 8));
   assign axi_awburst_o = 2'b01;
   assign axi_wstrb_o   = '1;
+  assign status_o = (axi_bresp_i == AXI_OKAY) ? AXI_OKAY : AXI_SLVERR;
 
-  always_ff @(posedge clk_i or negedge rst_ni) begin
+  always_ff @(posedge clk_i) begin
     if (!rst_ni) begin
       state_q     <= StIdle;
       read_ptr_q  <= '0;
@@ -96,16 +103,17 @@ module writeback_engine
         read_ptr_d = read_ptr_q;
 
         if (read_ptr_q > '0 &&
-          read_ptr_q <= data_i.nb_transfer + 1) begin
+          read_ptr_q <= total_beats) begin
           axi_wvalid_o = 1'b1;
+          // LAST is part of the payload: it must not depend on READY.
+          axi_wlast_o = (read_ptr_q == total_beats);
         end
 
         if (read_ptr_q == '0) begin
           read_ptr_d = read_ptr_q + 1'b1;
         end else if (axi_wready_i) begin
 
-          if (read_ptr_q == data_i.nb_transfer + 1) begin
-            axi_wlast_o = 1'b1;
+          if (read_ptr_q == total_beats) begin
             state_d     = StWaitBresp;
           end else begin
             read_ptr_d = read_ptr_q + 1'b1;
@@ -124,6 +132,14 @@ module writeback_engine
 
       default:;
     endcase
+
+    // Cancel external handshakes immediately; RAM state resets on the clock.
+    if (!rst_ni) begin
+      axi_awvalid_o = 1'b0;
+      axi_wvalid_o = 1'b0;
+      axi_bready_o = 1'b0;
+      addr_ready_o = 1'b0;
+    end
   end
 
   assign ram_addr_o   = read_ptr_d[MEM_CACHE_ADDR_W-1:0] + data_i.cache_addr;

@@ -1,127 +1,136 @@
-import cocotb
-from cocotb.triggers import Timer, RisingEdge
-from cocotb.clock import Clock
-from cocotb import start_soon
-
-
-from cocotb_wrapper import *
-from verible_struct_parser import *
-import generated_config as config
-
-import logging
-
-from util import *
-
+"""CPU frontend: independent channels, synchronous RAM and side-effect-free errors."""
 import random
 
-logger = logging.getLogger("cocotb.test")
-logger.setLevel(logging.DEBUG)
+import cocotb
+from cocotb.triggers import Timer
 
-PERIOD = 20
-
-CACHE_ADDR = 15
-MEM_ADDR = 7
-
-config.TAG_SIZE = 3
-
-async def reset(clk, rst):
-    # Init and reset
-    rst.value = 0
-    await Timer(1, units="ns")
-    await RisingEdge(clk)
-    rst.value = 1
-    await RisingEdge(clk)
+from cpu_master import CpuMaster, sample_cpu
 
 
+class TransactionBench:
+    def __init__(self, dut):
+        self.dut = dut
+        self.cpu = CpuMaster(dut, self.cycle)
+        self.rng = random.Random(40)
+        self.memory = [self.rng.getrandbits(32) for _ in range(1 << len(dut.ram_addr_o))]
+        self.lookup_delay = 3
+        self.lookup_status = 0
+        self.way = 0
+        self.lookup_cycles = 0
+        self.lookups = 0
+        self.commits = []
 
-async def inst_clocks(clk, PERIOD):
-    """this instantiates the axi environement & clocks"""
-    start_soon(Clock(clk, PERIOD, units="ns").start())
+    async def cycle(self):
+        dut = self.dut
+        dut.clk_i.value = 0
+        active = bool(dut.arvalid_o.value or dut.awvalid_o.value)
+        if active:
+            if self.lookup_cycles == 0:
+                self.lookups += 1
+            self.lookup_cycles += 1
+        else:
+            self.lookup_cycles = 0
+        dut.hit_i.value = int(active and self.lookup_cycles > self.lookup_delay)
+        dut.hit_addr_i.value = self.way
+        dut.lookup_status_i.value = self.lookup_status
+        await Timer(5, unit="ns")
+        sample = sample_cpu(dut)
+        address = int(dut.ram_addr_o.value)
+        old_data = self.memory[address]
+        mask = int(dut.ram_we_o.value)
+        data = int(dut.ram_data_o.value)
+        for byte in range(4):
+            if mask & (1 << byte):
+                bits = 255 << (8 * byte)
+                self.memory[address] = (self.memory[address] & ~bits) | (data & bits)
+        if dut.access_done_o.value:
+            self.commits.append((int(dut.commit_way_o.value), bool(dut.write_commit_o.value)))
+        dut.clk_i.value = 1
+        await Timer(1, unit="ps")
+        dut.ram_data_i.value = old_data
+        await Timer(4999, unit="ps")
+        return sample
 
-async def emulate_miss(w):
-    w.hit_i.value = 0
-    await RisingEdge(w.clk_i)
-    await RisingEdge(w.clk_i)
-    await RisingEdge(w.clk_i)
-    await RisingEdge(w.clk_i)
-    await RisingEdge(w.clk_i)
-    await RisingEdge(w.clk_i)
-    await RisingEdge(w.clk_i)
-    w.hit_i.value = 1
-
+    async def reset(self):
+        self.cpu.initialize()
+        self.dut.rst_ni.value = 0
+        self.dut.hit_i.value = 0
+        self.dut.hit_addr_i.value = 0
+        self.dut.lookup_status_i.value = 0
+        self.dut.ram_data_i.value = 0
+        for _ in range(3):
+            await self.cycle()
+        self.dut.rst_ni.value = 1
+        await self.cycle()
 
 
 @cocotb.test()
-async def main(dut):
-    # structs = parse_verible_json("../tree.json")
-    # w = wrap_dut(dut, structs)
-    # w.register_struct_port("data_i", "cache_op_t")
-
-    structs = parse_verible_json("../tree.json")["structs"]
-    w = DutWrapper(dut, structs=structs, port_types={})
-
-    await inst_clocks(w.clk_i, PERIOD)
-    await reset(w.clk_i, w.rst_ni)
-
-    i = 0
-    jitter = 50
-
-    w.axi_awaddr_i.value = 0
-    w.axi_awvalid_i.value = 1
-    w.axi_wdata_i.value = 0
-    w.axi_wvalid_i.value = 0
-    w.axi_wstrb_i.value = 0
-
-    w.axi_bready_i.value = 1
-
-    w.axi_araddr_i.value = 0
-    w.axi_arvalid_i.value = 1
-    w.axi_rready_i.value = 0
-
-    w.hit_i.value = 0
-    w.hit_addr_o.value = 0
-
-    w.ram_data_i.value = 0
-
-    while True:
-        await RisingEdge(w.clk_i)
-        i += 1
-        if i == 10000:
-            break
-
-        if w.axi_arready_o.value == 1 and w.axi_arvalid_i.value == 1:
-            w.axi_arvalid_i.value = 1
-            w.axi_rready_i.value = 1
-            cocotb.start_soon(emulate_miss(w))
-        elif w.axi_arready_o.value == 1:
-            w.axi_araddr_i.value = 12
-            w.axi_arvalid_i.value = 1
-            w.axi_rready_i.value = 1
-
-        if w.axi_rready_i.value == 1 and w.axi_rvalid_o.value == 1:
-            w.hit_i.value = 0
+async def independent_channels_masks_and_synchronous_reads(dut):
+    bench = TransactionBench(dut)
+    await bench.reset()
+    for way in range(8):
+        bench.way = way
+        for mask in range(16):
+            address = 0x4000 + 4 * mask
+            ram_address = way * 256 + mask
+            before = bench.memory[ram_address]
+            data = bench.rng.getrandbits(32)
+            await bench.cpu.write(address, data, mask, aw_delay=mask % 3, w_delay=(mask + 1) % 3)
+            expected = before
+            for byte in range(4):
+                if mask & (1 << byte):
+                    bits = 255 << (8 * byte)
+                    expected = (expected & ~bits) | (data & bits)
+            assert bench.memory[ram_address] == expected
+            assert await bench.cpu.read(address) == expected
+    assert len(bench.commits) == 8 * (15 + 16)
 
 
-        if w.axi_awready_o.value == 1 and w.axi_awvalid_i.value == 1:
-            w.axi_awvalid_i.value = 0
-            w.axi_wvalid_i.value = 1
-            cocotb.start_soon(emulate_miss(w))
+@cocotb.test()
+async def illegal_addresses_and_lookup_errors(dut):
+    bench = TransactionBench(dut)
+    await bench.reset()
+    before = bench.memory.copy()
+    for address in (1, 2, 3, 0x20000000, 0x80000000, 0xFFFFFFFF):
+        await bench.cpu.write(address, 0x12345678, status=2)
+        assert await bench.cpu.read(address, status=2) == 0
+    assert bench.memory == before and bench.lookups == 0 and not bench.commits
+    bench.lookup_status = 2
+    await bench.cpu.write(0x1000, 0xABCDEF12, status=2)
+    assert await bench.cpu.read(0x1000, status=2) == 0
+    assert bench.memory == before and not bench.commits
+    bench.lookup_status = 0
+    await bench.cpu.write(0x1000, 0xABCDEF12)
+    assert await bench.cpu.read(0x1000) == 0xABCDEF12
 
-        if w.axi_wvalid_i.value == 1 and w.axi_wready_o.value == 1:
-            w.hit_i.value = 0
-            break
 
-
-    await RisingEdge(w.clk_i)
-    await RisingEdge(w.clk_i)
-    await RisingEdge(w.clk_i)
-    await RisingEdge(w.clk_i)
-
+@cocotb.test()
+async def simultaneous_read_and_write_are_both_served(dut):
+    bench = TransactionBench(dut)
+    await bench.reset()
+    dut.axi_araddr_i.value = 0x1000
+    dut.axi_awaddr_i.value = 0x1004
+    dut.axi_wdata_i.value = 0xDEADBEEF
+    dut.axi_wstrb_i.value = 15
+    dut.axi_arvalid_i.value = 1
+    dut.axi_awvalid_i.value = 1
+    dut.axi_wvalid_i.value = 1
+    dut.axi_rready_i.value = 1
+    dut.axi_bready_i.value = 1
+    reads = writes = 0
+    for _ in range(80):
+        sample = await bench.cycle()
+        if sample.arready:
+            dut.axi_arvalid_i.value = 0
+        if sample.awready:
+            dut.axi_awvalid_i.value = 0
+        if sample.wready:
+            dut.axi_wvalid_i.value = 0
+        reads += sample.rvalid
+        writes += sample.bvalid
+    assert (reads, writes) == (1, 1)
+    assert bench.memory[1] == 0xDEADBEEF
 
 
 def test_transaction(runner):
-    runner.test(
-        hdl_toplevel="transaction",
-        test_module=__name__,
-        test_args=["--trace"]
-    )
+    runner.test(hdl_toplevel="transaction", test_module=__name__, test_args=["--trace"])

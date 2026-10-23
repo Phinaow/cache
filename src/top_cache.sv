@@ -1,5 +1,6 @@
 module top_cache
   import cache_pkg::*;
+#(parameter bit USE_VENDOR_RAM = 1'b1)
 (
     // input  logic                    sys_clk_i   ,
     input  logic                    rst_ni,
@@ -91,163 +92,66 @@ module top_cache
 
   assign aresetn = ~ui_clk_sync_rst;
 
-  logic                             controller_valid_cdc;
-  logic                             controller_ready_cdc;
-  cdc_data_t                        controller_data_cdc;
-
-  logic      [CPU_CACHE_ADDR_W-1:0] controller_to_cache_addr;
-  logic      [      CPU_DATA_W-1:0] controller_to_cache_data;
-  logic      [      CPU_DATA_W-1:0] cache_to_controller_data;
-  logic      [  (CPU_DATA_W/8)-1:0] controller_to_cache_we;
-
-  logic                             controller_resp_valid;
-  logic                             controller_resp_ready;
-  rf_wb_e                           controller_resp_data;
-
-  logic                             miss_handler_valid_cdc;
-  logic                             miss_handler_ready_cdc;
-  cdc_data_t                        miss_handler_data_cdc;
-
-  logic                             miss_resp_ready;
-  logic                             miss_resp_valid;
-  rf_wb_e                           miss_resp_data;
-
-  logic      [MEM_CACHE_ADDR_W-1:0] miss_handler_to_cache_addr;
-  logic      [      MEM_DATA_W-1:0] cache_to_miss_handler_data;
-  logic      [      MEM_DATA_W-1:0] miss_handler_to_cache_data;
-  logic      [  (MEM_DATA_W/8)-1:0] miss_handler_to_cache_we;
-
-
-
-  cache_controller cache_controller_inst (
-      .clk_i           (clk_cpu_i),
-      .rst_ni          (rst_ni),
-      .axi_awaddr_i    (axi_awaddr_i),
-      .axi_awvalid_i   (axi_awvalid_i),
-      .axi_awready_o   (axi_awready_o),
-      .axi_wdata_i     (axi_wdata_i),
-      .axi_wvalid_i    (axi_wvalid_i),
-      .axi_wready_o    (axi_wready_o),
-      .axi_wstrb_i     (axi_wstrb_i),
-      .axi_bresp_o     (axi_bresp_o),
-      .axi_bvalid_o    (axi_bvalid_o),
-      .axi_bready_i    (axi_bready_i),
-      .axi_araddr_i    (axi_araddr_i),
-      .axi_arvalid_i   (axi_arvalid_i),
-      .axi_arready_o   (axi_arready_o),
-      .axi_rdata_o     (axi_rdata_o),
-      .axi_rresp_o     (axi_rresp_o),
-      .axi_rvalid_o    (axi_rvalid_o),
-      .axi_rready_i    (axi_rready_i),
-      .cdc_req_valid_o (controller_valid_cdc),
-      .cdc_req_data_o  (controller_data_cdc),
-      .cdc_req_ready_i (controller_ready_cdc),
-      .cdc_resp_valid_i(controller_resp_valid),
-      .cdc_resp_ready_o(controller_resp_ready),
-      .ram_addr_o      (controller_to_cache_addr),
-      .ram_data_o      (controller_to_cache_data),
-      .ram_data_i      (cache_to_controller_data),
-      .ram_we_o        (controller_to_cache_we)
-  );
-
-
-  cdc_handshake #(
-      .T(cdc_data_t)
-  ) controller_req (
-      .clk_src_i  (clk_cpu_i),
-      .rst_src_ni (rst_ni),
-      .src_data_i (controller_data_cdc),
-      .src_valid_i(controller_valid_cdc),
-      .src_ready_o(controller_ready_cdc),
-      .clk_dst_i  (ui_clk),
-      .rst_dst_ni (rst_ni),
-      .dst_data_o (miss_handler_data_cdc),
-      .dst_valid_o(miss_handler_valid_cdc),
-      .dst_ready_i(miss_handler_ready_cdc)
-  );
-
-  cdc_handshake #(
-      .T(rf_wb_e)
-  ) miss_handler_resp (
-      .clk_src_i  (ui_clk),
-      .rst_src_ni (rst_ni),
-      .src_data_i (miss_resp_data),
-      .src_valid_i(miss_resp_valid),
-      .src_ready_o(miss_resp_ready),
-      .clk_dst_i  (clk_cpu_i),
-      .rst_dst_ni (rst_ni),
-      .dst_data_o (controller_resp_data),
-      .dst_valid_o(controller_resp_valid),
-      .dst_ready_i(controller_resp_ready)
-  );
-
-
-  miss_handler miss_handler_inst (
-      .clk_i        (ui_clk),
-      .rst_ni       (rst_ni),
-      .cdc_data_i   (miss_handler_data_cdc),
-      .cdc_valid_i  (miss_handler_valid_cdc),
-      .cdc_ready_o  (miss_handler_ready_cdc),
-      .resp_data_o  (miss_resp_data),
-      .resp_valid_o (miss_resp_valid),
-      .resp_ready_i (miss_resp_ready),
-      .ram_addr_o   (miss_handler_to_cache_addr),
-      .ram_data_i   (cache_to_miss_handler_data),
-      .ram_data_o   (miss_handler_to_cache_data),
-      .ram_we_o     (miss_handler_to_cache_we),
-      .m_axi_awid   (dram_axi_awid),
-      .m_axi_awaddr (dram_axi_awaddr),
-      .m_axi_awlen  (dram_axi_awlen),
-      .m_axi_awsize (dram_axi_awsize),
+  // Calibration loss asserts reset immediately; each core domain releases
+  // its reset through its own synchronizer once the memory system is ready.
+  logic core_reset_n;
+  assign core_reset_n = rst_ni && init_calib_complete && mmcm_locked && !ui_clk_sync_rst;
+  cache_core #(.USE_VENDOR_RAM(USE_VENDOR_RAM)) core (
+      .rst_ni(core_reset_n), .clk_cpu_i(clk_cpu_i), .clk_mem_i(ui_clk),
+      .axi_awaddr_i(axi_awaddr_i),
+      .axi_awvalid_i(axi_awvalid_i),
+      .axi_awready_o(axi_awready_o),
+      .axi_wdata_i(axi_wdata_i),
+      .axi_wvalid_i(axi_wvalid_i),
+      .axi_wready_o(axi_wready_o),
+      .axi_wstrb_i(axi_wstrb_i),
+      .axi_bresp_o(axi_bresp_o),
+      .axi_bvalid_o(axi_bvalid_o),
+      .axi_bready_i(axi_bready_i),
+      .axi_araddr_i(axi_araddr_i),
+      .axi_arvalid_i(axi_arvalid_i),
+      .axi_arready_o(axi_arready_o),
+      .axi_rdata_o(axi_rdata_o),
+      .axi_rresp_o(axi_rresp_o),
+      .axi_rvalid_o(axi_rvalid_o),
+      .axi_rready_i(axi_rready_i),
+      .m_axi_awid(dram_axi_awid),
+      .m_axi_awaddr(dram_axi_awaddr),
+      .m_axi_awlen(dram_axi_awlen),
+      .m_axi_awsize(dram_axi_awsize),
       .m_axi_awburst(dram_axi_awburst),
-      .m_axi_awlock (dram_axi_awlock),
+      .m_axi_awlock(dram_axi_awlock),
       .m_axi_awcache(dram_axi_awcache),
-      .m_axi_awprot (dram_axi_awprot),
-      .m_axi_awqos  (dram_axi_awqos),
+      .m_axi_awprot(dram_axi_awprot),
+      .m_axi_awqos(dram_axi_awqos),
       .m_axi_awvalid(dram_axi_awvalid),
       .m_axi_awready(dram_axi_awready),
-      .m_axi_wdata  (dram_axi_wdata),
-      .m_axi_wstrb  (dram_axi_wstrb),
-      .m_axi_wlast  (dram_axi_wlast),
-      .m_axi_wvalid (dram_axi_wvalid),
-      .m_axi_wready (dram_axi_wready),
-      .m_axi_bid    (dram_axi_bid),
-      .m_axi_bresp  (dram_axi_bresp),
-      .m_axi_bvalid (dram_axi_bvalid),
-      .m_axi_bready (dram_axi_bready),
-      .m_axi_arid   (dram_axi_arid),
-      .m_axi_araddr (dram_axi_araddr),
-      .m_axi_arlen  (dram_axi_arlen),
-      .m_axi_arsize (dram_axi_arsize),
+      .m_axi_wdata(dram_axi_wdata),
+      .m_axi_wstrb(dram_axi_wstrb),
+      .m_axi_wlast(dram_axi_wlast),
+      .m_axi_wvalid(dram_axi_wvalid),
+      .m_axi_wready(dram_axi_wready),
+      .m_axi_bid(dram_axi_bid),
+      .m_axi_bresp(dram_axi_bresp),
+      .m_axi_bvalid(dram_axi_bvalid),
+      .m_axi_bready(dram_axi_bready),
+      .m_axi_arid(dram_axi_arid),
+      .m_axi_araddr(dram_axi_araddr),
+      .m_axi_arlen(dram_axi_arlen),
+      .m_axi_arsize(dram_axi_arsize),
       .m_axi_arburst(dram_axi_arburst),
-      .m_axi_arlock (dram_axi_arlock),
+      .m_axi_arlock(dram_axi_arlock),
       .m_axi_arcache(dram_axi_arcache),
-      .m_axi_arprot (dram_axi_arprot),
-      .m_axi_arqos  (dram_axi_arqos),
+      .m_axi_arprot(dram_axi_arprot),
+      .m_axi_arqos(dram_axi_arqos),
       .m_axi_arvalid(dram_axi_arvalid),
       .m_axi_arready(dram_axi_arready),
-      .m_axi_rid    (dram_axi_rid),
-      .m_axi_rdata  (dram_axi_rdata),
-      .m_axi_rresp  (dram_axi_rresp),
-      .m_axi_rlast  (dram_axi_rlast),
-      .m_axi_rvalid (dram_axi_rvalid),
-      .m_axi_rready (dram_axi_rready)
-  );
-
-
-  true_dual_port_ram true_dual_port_ram_inst (
-      .clkb (clk_cpu_i),
-      .clka (ui_clk),
-      .web  (controller_to_cache_we),
-      .wea  (miss_handler_to_cache_we),
-      .enb  (1'b1),
-      .ena  (1'b1),
-      .addrb(controller_to_cache_addr),
-      .addra(miss_handler_to_cache_addr),
-      .dinb (controller_to_cache_data),
-      .dina (miss_handler_to_cache_data),
-      .doutb(cache_to_controller_data),
-      .douta(cache_to_miss_handler_data)
+      .m_axi_rid(dram_axi_rid),
+      .m_axi_rdata(dram_axi_rdata),
+      .m_axi_rresp(dram_axi_rresp),
+      .m_axi_rlast(dram_axi_rlast),
+      .m_axi_rvalid(dram_axi_rvalid),
+      .m_axi_rready(dram_axi_rready)
   );
 
   logic init_calib_complete;

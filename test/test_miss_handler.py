@@ -1,231 +1,112 @@
+"""Miss handler: command capture, synchronous RAM, errors and held responses."""
+import random
+
 import cocotb
-from cocotb.triggers import Timer, RisingEdge
-from cocotb.clock import Clock
-from cocotb import start_soon
+from cocotb.triggers import Timer
+
+from axi_memory import AxiMemory
 
 
-from cocotb_wrapper import *
-from verible_struct_parser import *
+class MissBench:
+    def __init__(self, dut):
+        self.dut = dut
+        self.bus = AxiMemory(dut, seed=42)
+        self.depth = 1 << len(dut.ram_addr_o)
+        self.width = len(dut.ram_data_i) // 8
+        rng = random.Random(2026)
+        self.ram = [rng.getrandbits(self.width * 8) for _ in range(self.depth)]
 
-import logging
+    async def cycle(self):
+        dut = self.dut
+        dut.clk_i.value = 0
+        self.bus.drive()
+        await Timer(5, unit="ns")
+        accepted = bool(dut.cdc_valid_i.value and dut.cdc_ready_o.value)
+        response = (int(dut["resp_data_o.wb_rf"].value), int(dut["resp_data_o.status"].value))
+        valid = bool(dut.resp_valid_o.value)
+        address = int(dut.ram_addr_o.value)
+        old_data = self.ram[address]
+        if dut.ram_we_o.value:
+            assert int(dut.ram_we_o.value) == (1 << self.width) - 1
+            self.ram[address] = int(dut.ram_data_o.value)
+        self.bus.observe()
+        dut.clk_i.value = 1
+        await Timer(1, unit="ps")
+        dut.ram_data_i.value = old_data
+        await Timer(4999, unit="ps")
+        return accepted, valid, response
 
-from util import *
+    async def reset(self):
+        dut = self.dut
+        dut.rst_ni.value = 0
+        dut.cdc_data_i.value = 0
+        dut.cdc_valid_i.value = 0
+        dut.resp_ready_i.value = 0
+        dut.ram_data_i.value = 0
+        for _ in range(3):
+            await self.cycle()
+        dut.rst_ni.value = 1
+        await self.cycle()
 
-logger = logging.getLogger("cocotb.test")
-logger.setLevel(logging.DEBUG)
-
-CPU_PERIOD = 20
-
-REFILL = 0
-WRITEBACK = 1
-
-MEM_ADDR = 5
-CACHE_ADDR = 96
-
-async def reset(dut):
-    # Init and reset
-    dut.rst_ni.value = 0
-    await Timer(1, units="ns")
-    await RisingEdge(dut.clk_i)
-    dut.rst_ni.value = 1
-    await RisingEdge(dut.clk_i)
-
-
-
-async def inst_clocks(dut):
-    """this instantiates the axi environement & clocks"""
-    start_soon(Clock(dut.clk_i, CPU_PERIOD, units="ns").start())
-
+    async def transfer(self, operation, base, beats, address, expected_status=0):
+        dut = self.dut
+        before_ram = self.ram.copy()
+        expected_read = [self.bus.load(address + i * self.width, self.width) for i in range(beats)]
+        dut["cdc_data_i.mem_addr"].value = address
+        dut["cdc_data_i.nb_transfer"].value = beats - 1
+        dut["cdc_data_i.cache_addr"].value = base
+        dut["cdc_data_i.wb_rf"].value = operation
+        dut.cdc_valid_i.value = 1
+        for _ in range(20):
+            accepted, _, _ = await self.cycle()
+            if accepted:
+                break
+        else:
+            raise AssertionError("Command was not accepted")
+        # The caller may immediately change all command fields after acceptance.
+        dut.cdc_valid_i.value = 0
+        dut.cdc_data_i.value = 0
+        for _ in range(100 + beats * 20):
+            assert not dut.cdc_ready_o.value, "Second command accepted before completion"
+            _, valid, response = await self.cycle()
+            if valid:
+                assert response == (operation, expected_status)
+                break
+        else:
+            raise AssertionError("Miss handler did not respond")
+        for _ in range(7):
+            _, valid, held = await self.cycle()
+            assert valid and held == response, "Response changed while stalled"
+        dut.resp_ready_i.value = 1
+        await self.cycle()
+        dut.resp_ready_i.value = 0
+        for _ in range(4):
+            _, valid, _ = await self.cycle()
+            assert not valid, "Duplicate response"
+        assert dut.cdc_ready_o.value
+        if operation == 1:
+            assert self.ram == before_ram, "Writeback modified the cache RAM"
+            actual = [self.bus.load(address + i * self.width, self.width) for i in range(beats)]
+            assert actual == before_ram[base:base + beats]
+        elif expected_status == 0:
+            assert self.ram[base:base + beats] == expected_read
+            assert self.ram[:base] == before_ram[:base]
+            assert self.ram[base + beats:] == before_ram[base + beats:]
 
 
 @cocotb.test()
-async def main(dut):
-    # structs = parse_verible_json("../tree.json")
-    # w = wrap_dut(dut, structs)
-    # w.register_struct_port("data_i", "cache_op_t")  # ← ajout
-
-    cache = list(range(1000))
-    dram = list(range(1000))
-
-    addr = 0
-    nb_transfer = None
-    i = 0
-
-    start_refill = False
-    start_writeback = True
-
-    structs = parse_verible_json("../tree.json")["structs"]
-
-    port_types={"cdc_data_i": "cdc_data_t"}
-
-    w = DutWrapper(dut, structs=structs, port_types=port_types)
-
-    await inst_clocks(w)
-    await reset(w)
-
-    w.cdc_data_i.mem_addr.value  = 0
-    w.cdc_data_i.nb_transfer.value = 31
-    w.cdc_data_i.cache_addr.value = CACHE_ADDR
-
-    w.cdc_valid_i.value = 0
-
-    w.ram_data_i.value = 0
-
-    w.m_axi_awready.value = 0
-
-    w.m_axi_wready.value = 0
-
-    w.m_axi_bid.value    = 0
-    w.m_axi_bresp.value  = 0
-    w.m_axi_bvalid.value = 0
-
-    w.m_axi_arready.value = 0
-
-    w.m_axi_rid.value    = 0
-    w.m_axi_rdata.value  = 0
-    w.m_axi_rresp.value  = 0
-    w.m_axi_rlast.value  = 0
-    w.m_axi_rvalid.value = 0
-
-    await RisingEdge(w.clk_i)
-
-    w.cdc_data_i.mem_addr.value  = 0
-    w.cdc_data_i.wb_rf.value = REFILL
-    w.cdc_valid_i.value = 1
-
-    w.resp_ready_i.value = 1
-    wait = 0
-    iteration = 0
-    tsts = 0
-    while True:
-        await RisingEdge(w.clk_i)
-
-        if(w.ram_we_o.value != 0):
-            cache[int(w.ram_addr_o.value)] = int(w.ram_data_o.value)
-
-        w.ram_data_i.value = cache[int(w.ram_addr_o.value)]
-
-        if(w.m_axi_arvalid.value == 1):
-            addr = int(w.m_axi_araddr.value)
-            nb_transfer = int(w.m_axi_arlen.value)
-            w.m_axi_arready.value = 1
-
-        if w.m_axi_arvalid.value == 1 and w.m_axi_arready.value == 1:
-            w.m_axi_arready.value = 0
-            start_refill = True
-
-        if w.m_axi_rvalid.value == 1 and w.m_axi_rready.value == 1:
-            i += 1
-            w.m_axi_rvalid.value = 0
-
-        if w.m_axi_rlast.value == 1:
-            w.m_axi_rlast.value = 0
-
-        if start_refill:
-            w.m_axi_rdata.value = dram[addr+i]
-            if tsts == 30:
-                w.m_axi_rvalid.value = 0
-            else:
-                w.m_axi_rvalid.value = 1
-            tsts += 1
-
-        if nb_transfer is not None and i == nb_transfer:
-            w.m_axi_rlast.value = 1
-
-
-        if w.resp_ready_i.value == 1 and w.resp_valid_o.value == 1:
-            assert w.resp_data_o.value == 0
-            for verif in range(int(nb_transfer)):
-                assert cache[verif+CACHE_ADDR] == dram[verif+iteration], f"Value {cache[0:128]} :: {iteration}"
-            iteration += 1
-            w.cdc_data_i.mem_addr.value = iteration
-            start_refill = False
-            i = 0
-
-        if iteration == 1:
-            w.cdc_valid_i.value = 0
-            break
-
-        wait += 1
-        if wait == 10000:
-            assert 1 == 0, f"Failed to transfer the data"
-            break
-
-    # await RisingEdge(w.clk_i)
-    # await RisingEdge(w.clk_i)
-    # await RisingEdge(w.clk_i)
-    # await RisingEdge(w.clk_i)
-    # await RisingEdge(w.clk_i)
-
-    w.cdc_data_i.mem_addr.value  = 0
-    w.cdc_data_i.wb_rf.value = WRITEBACK
-    w.cdc_valid_i.value = 1
-    wait = 0
-    iteration = 0
-    i = 0
-
-    while True:
-        await RisingEdge(w.clk_i)
-
-        # w.m_axi_arready.value = 1
-        # w.m_axi_rvalid.value = 1
-        # w.m_axi_rlast.value = 1
-
-        if(w.ram_we_o.value != 0):
-            cache[int(w.ram_addr_o.value)] = int(w.ram_data_o.value)
-
-        w.ram_data_i.value = cache[int(w.ram_addr_o.value)]
-
-        if w.m_axi_awvalid.value == 1:
-            addr = int(w.m_axi_awaddr.value)
-            nb_transfer = int(w.m_axi_awlen.value)
-            w.m_axi_awready.value = 1
-
-        if w.m_axi_awvalid.value == 1 and w.m_axi_awready.value == 1:
-            w.m_axi_awready.value = 0
-            start_writeback = True
-
-        if w.m_axi_wvalid.value == 1:
-            dram[addr+i] = int(w.m_axi_wdata.value)
-            w.m_axi_wready.value = 1
-
-        if w.m_axi_wready.value == 1 and w.m_axi_wvalid.value == 1:
-            # w.m_axi_wready.value = 0
-            i += 1
-
-        if w.m_axi_wlast.value == 1:
-            w.m_axi_wready.value = 0
-
-        if w.m_axi_bready.value == 1:
-            w.m_axi_bvalid.value = 1
-            w.m_axi_bresp.value = 0
-        if w.m_axi_bvalid.value == 1 and w.m_axi_bready.value == 1:
-            w.m_axi_bvalid.value = 0
-
-        if w.resp_ready_i.value == 1 and w.resp_valid_o.value == 1:
-            assert w.resp_data_o.value == 1
-            for verif in range(int(nb_transfer)):
-                pass
-                #assert cache[CACHE_ADDR+verif] == dram[verif+iteration+5], f"Value {cache[0:128]} :: {iteration}"
-            iteration += 1
-            w.cdc_data_i.mem_addr.value = 36
-            i = 0
-
-        if iteration == 1:
-            w.cdc_valid_i.value = 0
-            break
-
-        wait += 1
-        if wait == 10000:
-            assert 1 == 0, f"Failed to transfer the data"
-            break
-
-    print(dram, cache)
+async def mixed_commands_and_error_status(dut):
+    bench = MissBench(dut)
+    await bench.reset()
+    for operation in (0, 0, 1, 1, 0, 1):
+        for beats in (1, 2, 64, 256):
+            await bench.transfer(operation, bench.depth - beats, beats, 0x4000)
+    for operation, error in ((0, "next_read_error"), (1, "next_write_error"),
+                             (0, "next_bad_rid"), (1, "next_bad_bid")):
+        setattr(bench.bus, error, True)
+        await bench.transfer(operation, 13, 16, 0x2000, expected_status=2)
+        await bench.transfer(operation, 13, 16, 0x2000)
 
 
 def test_miss_handler(runner):
-    runner.test(
-        hdl_toplevel="miss_handler",
-        test_module=__name__,
-        test_args=["--trace"]
-    )
+    runner.test(hdl_toplevel="miss_handler", test_module=__name__, test_args=["--trace"])
